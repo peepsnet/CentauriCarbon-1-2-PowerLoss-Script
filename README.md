@@ -1,24 +1,220 @@
-I wrote power_loss.py (the Klipper module) and install.sh (the COSMOS overlay-mount installer) to do what the gist does. Both pass a syntax check, but I haven't run them on a printer or inside Klipper.
+# power_loss — Power Loss Recovery for Elegoo Centauri Carbon (COSMOS)
 
-The module follows the same flow as the gist:
+A Klipper extras module that detects a real mains power outage using the Centauri Carbon's hardware supercapacitor, saves the state of the print in progress, and lets you resume it once power returns.
 
-Charging: it enables supercap charging (GPIO 65) when Klipper is ready.
-Detection: it watches the outage pin (GPIO 192) using GPIO edge events, and falls back to sysfs polling if the kernel rejects that. POWER_LOSS_STATUS tells you which one is active.
-On an outage: it saves position, temperatures, fan, speed and file offset, turns the heaters off, then syncs and remounts the filesystems read-only without shutting down.
-Next boot: it shows a Resume Precise / Resume Safe / Discard prompt. Resuming reheats the nozzle, homes X/Y, fixes up Z for the [homing_override] lift, purges and wipes at the tray, then returns to the saved position and restarts the print.
-Commands: POWER_LOSS_STATUS, POWER_LOSS_RESUME, POWER_LOSS_RESUME_SAFE, POWER_LOSS_DISCARD and POWER_LOSS_TEST_READ.
+> [!WARNING]
+> This module is experimental and has not been validated across printers or hardware revisions. Test it with a print you don't care about before relying on it. See [Known limitations](#known-limitations).
 
-I made these changes from the gist's version:
+## Table of contents
 
-Debounce: an outage must last debounce_time (default 50 ms) before it counts, so a brief flicker doesn't trigger a save. In edge mode it re-reads the pin level after the delay. That re-read uses an ioctl I haven't confirmed works on this kernel; if it fails, the module trusts the edge and saves anyway.
-Atomic save: the state file is written to a temp file, fsynced and renamed, so a half-written file can't be mistaken for valid state.
-Print check: it only saves state if a print is running or paused, though it still protects the filesystems.
-GPIO 203 guard: the module refuses to start if GPIO 203 (the supercap output) is configured.
-Resume checks: it verifies the gcode file still exists before moving anything.
-No shell strings: sync and mount run as argument lists rather than through os.system.
-Wipe option: wipe: False skips the tray wipe pattern.
-No gpiod tier: I left out the gpiod tier because it isn't installed on COSMOS by default.
+- [How it works](#how-it-works)
+- [Hardware](#hardware)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Commands](#commands)
+- [Detection methods](#detection-methods)
+- [Resume sequence](#resume-sequence)
+- [Known limitations](#known-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Credits and license](#credits-and-license)
 
-To install, copy both files to the printer and run sh install.sh as root. Then add the [power_loss] section to printer.cfg and restart Klipper. The script backs up /etc/init.d/klipper before editing it, but check the result before rebooting, and re-check it after any COSMOS update.
+## How it works
 
-Test with a print you don't care about before relying on it. homing_override_z_lift and the hardcoded wipe coordinates are specific to this printer's macros. Whether motors and heaters keep any power during an outage is also unconfirmed, so the module only moves anything on resume, not at the moment of the outage.
+```mermaid
+flowchart TD
+    A[Klipper starts] --> B[Enable supercap charging]
+    B --> C[Watch outage pin]
+    C -->|Outage persists past debounce| D{Printing or paused?}
+    D -->|Yes| E[Save state to disk<br/>write + fsync + atomic rename]
+    D -->|No| F[Skip save]
+    E --> G[Turn off heaters]
+    F --> G
+    G --> H[sync + remount filesystems read-only]
+    H --> I[Power returns, next boot]
+    I --> J{Saved state found?}
+    J -->|Yes| K[Prompt: Resume Precise / Resume Safe / Discard]
+    J -->|No| L[Normal startup]
+```
+
+1. **Charges** the supercapacitor when Klipper becomes ready.
+2. **Detects** an outage on a dedicated GPIO pin, using edge events with a polling fallback, and debounces it so a brief flicker doesn't trigger a save.
+3. **Saves** position, temperatures, fan, speed and file offset to disk. This only happens if a print is running or paused.
+4. **Protects** the filesystems by running `sync` and remounting writable ext*/FAT mounts read-only. It does not shut the system down.
+5. **Offers a resume** on the next boot through a Mainsail/Fluidd prompt.
+
+## Hardware
+
+Pins on the Centauri Carbon 1 mainboard:
+
+| Function                       | SoC port | Linux GPIO | Used by this module |
+| ------------------------------ | -------- | ---------- | ------------------- |
+| Outage detection               | PG0      | 192        | Input (read)        |
+| Supercap charge enable         | PC1      | 65         | Output (control)    |
+| Supercap output to power rail  | PG11     | 203        | **Never used**      |
+
+> [!IMPORTANT]
+> GPIO 203 enables the supercap's output to the power rail. The module refuses to start if it is configured as either the sensor or charge pin. Don't change that without checking with a multimeter what is on the other side.
+
+Reported behavior from a real outage test: with the supercap charged, the SoC stayed alive for roughly 5–15 seconds. Whether motors and heaters keep any residual power is **unconfirmed**, so the module assumes they don't and only moves the toolhead on resume.
+
+## Installation
+
+COSMOS's root filesystem is a read-only squashfs, so the module is installed through an overlay mount over Klipper's `extras` directory. Run everything below on the printer as root.
+
+### Automatic
+
+```sh
+sh install.sh
+```
+
+The script copies `power_loss.py` to `/data`, mounts the overlay, and patches `/etc/init.d/klipper` so the mount survives reboots. It saves a backup to `/etc/init.d/klipper.bak`. Review the patched file before rebooting.
+
+### Manual
+
+```sh
+mkdir -p /data/klipper-extras-upper /data/klipper-extras-work
+cp power_loss.py /data/klipper-extras-upper/power_loss.py
+
+mount -t overlay klipper-extras-overlay \
+    -o lowerdir=/usr/share/klipper/klippy/extras,upperdir=/data/klipper-extras-upper,workdir=/data/klipper-extras-work \
+    /usr/share/klipper/klippy/extras
+```
+
+To make it permanent, add this inside the `start)` block of `/etc/init.d/klipper`, before the `start-stop-daemon` line:
+
+```sh
+if ! mount | grep -q klipper-extras-overlay; then
+    mount -t overlay klipper-extras-overlay \
+        -o lowerdir=/usr/share/klipper/klippy/extras,upperdir=/data/klipper-extras-upper,workdir=/data/klipper-extras-work \
+        /usr/share/klipper/klippy/extras
+fi
+```
+
+> [!NOTE]
+> A COSMOS update may overwrite `/etc/init.d/klipper`. Check it after every update.
+
+### Enable and verify
+
+Add a `[power_loss]` section to `printer.cfg` (see [Configuration](#configuration)), then:
+
+```sh
+service klipper restart
+```
+
+In the Mainsail/Fluidd console run:
+
+```
+POWER_LOSS_STATUS
+```
+
+After about 30 seconds it should report `charge_done=True` and show which `detection=` method is active.
+
+## Configuration
+
+Every option has a default. Only declare the ones you want to change.
+
+```ini
+[power_loss]
+sensor_gpio: 192
+charge_gpio: 65
+poll_interval: 0.01
+debounce_time: 0.05
+charge_time: 30
+save_path: /data/power_loss_state.json
+z_hop: 10.0
+travel_speed: 3000
+homing_override_z_lift: 5.0
+purge_mm: 15.0
+move_temp: 200.0
+wipe: True
+#invert_sensor: False
+```
+
+| Option                   | Default                          | Description                                                                                  |
+| ------------------------ | -------------------------------- | -------------------------------------------------------------------------------------------- |
+| `sensor_gpio`            | `192`                            | Linux GPIO for outage detection.                                                             |
+| `charge_gpio`            | `65`                             | Linux GPIO that enables supercap charging.                                                   |
+| `poll_interval`          | `0.01`                           | Seconds between reads when using the polling fallback.                                       |
+| `debounce_time`          | `0.05`                           | Seconds an outage must persist before it counts. Filters electrical noise and flickers.      |
+| `charge_time`            | `30`                             | Seconds the supercap is assumed to need to charge. Reported by `POWER_LOSS_STATUS`.          |
+| `save_path`              | `/data/power_loss_state.json`    | Where the state file is written. Must be on a writable partition.                            |
+| `z_hop`                  | `10.0`                           | Safety lift (mm) before homing X/Y on resume.                                                |
+| `travel_speed`           | `3000`                           | Speed (mm/min) for hop and travel moves on resume.                                           |
+| `homing_override_z_lift`  | `5.0`                            | Must match the `G0 Z<N>` lift in your `[homing_override]` macro. See [limitations](#known-limitations). |
+| `purge_mm`               | `15.0`                           | Filament purged at the tray before resuming, to clear ooze.                                  |
+| `move_temp`              | `200.0`                          | Nozzle temperature to reach before any movement. The full target keeps heating in the background. |
+| `wipe`                   | `True`                           | Run the tray wipe pattern after purging.                                                     |
+| `invert_sensor`          | `False`                          | Set to `True` if the sensor polarity turns out to be inverted.                               |
+
+## Commands
+
+| Command                      | Description                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `POWER_LOSS_STATUS`          | Shows monitor status: pins, charge state, pending resume and the active detection method.                    |
+| `POWER_LOSS_RESUME`          | Resumes from the exact position at the moment of the outage.                                                 |
+| `POWER_LOSS_RESUME_SAFE`     | Resumes from the last completed layer. It repeats part of a layer but avoids resuming mid-move or mid-wipe.  |
+| `POWER_LOSS_DISCARD`         | Deletes the saved state without resuming.                                                                    |
+| `POWER_LOSS_TEST_READ N=<n>` | Shows the last *n* sensor readings. It is non-blocking and safe to run mid-print.                            |
+
+`POWER_LOSS_RESUME_SAFE` is the highlighted choice in the prompt. If the outage happened before the first layer change, it falls back to the precise capture automatically.
+
+## Detection methods
+
+The module tries these in order and falls back if one fails:
+
+1. **Raw GPIO ioctl (v1 uAPI)** requests edge events on `/dev/gpiochip0` using only the Python standard library. It is interrupt-driven, so the reactor stays idle between events.
+2. **Sysfs polling** reads the pin every `poll_interval` seconds. It is the guaranteed fallback.
+
+`POWER_LOSS_STATUS` reports which one is active, and the choice is also logged at startup.
+
+> [!NOTE]
+> A GPIO line has one exclusive owner in the kernel. The module requests the edge events *before* touching sysfs for this reason. If you export GPIO 192 manually while Klipper is running, the ioctl tier will fail with `EBUSY` and the module will fall back to polling.
+
+In edge mode, the pin level is re-read after `debounce_time` to confirm the outage. If that read fails, the module trusts the edge and saves anyway, so it errs toward saving.
+
+## Resume sequence
+
+When you choose a resume option, the module does the following:
+
+1. **Heats the nozzle** to `move_temp` (the bed and full nozzle target keep heating in the background) so a nozzle stuck to the part can release.
+2. **Marks Z** at the saved height and hops up by `z_hop`.
+3. **Homes X/Y** with a real `G28 X Y`. This avoids trusting a saved XY position that may be off by several mm due to motion lookahead.
+4. **Corrects Z** for the `[homing_override]` lift: it re-declares Z as `saved_z + z_hop + homing_override_z_lift`.
+5. **Waits for full temperatures**, then runs `MOVE_TO_TRAY`, purges `purge_mm` of filament and runs the wipe pattern.
+6. **Travels** to the saved X/Y while still elevated, then lowers to the saved Z.
+7. **Restores extruder state** by replaying the G-code file up to the resume offset to find the extrude mode (`M82`/`M83`) and last `E` value. It does not trust Klipper's live state. Fan and speed factor are also restored.
+8. **Reloads the file** with `M23`, `M26` and `M24`, and deletes the state file.
+
+The state file contains two position packages: `instant` (captured at the outage) and `checkpoint` (captured at the last layer change). Each package is only ever used as a whole. The module never mixes position and file offset from different packages.
+
+## Known limitations
+
+- **`homing_override_z_lift` is printer-specific.** The Z correction assumes a real `G0 Z<N>` inside your `[homing_override]` macro. If you change that macro, this value becomes silently wrong.
+- **The wipe pattern and `MOVE_TO_TRAY` are Centauri Carbon specific.** The wipe coordinates are hardcoded. Set `wipe: False` to skip the wipe.
+- **Motor and heater power during an outage is unconfirmed.** The module assumes there is none and doesn't attempt an emergency retract or Z hop at outage time.
+- **A brief outage still runs the full flow.** Debounce filters noise and sub-`debounce_time` flickers, but any outage longer than that triggers the save and filesystem protection even if power returns a moment later.
+- **The resume leaves a visible seam** where the print continues. This is inherent to this kind of recovery.
+- **The debounce re-read ioctl is unverified** on this kernel. If it fails, the module saves on the edge alone.
+- **Tested hardware is limited.** It targets the Centauri Carbon 1 running COSMOS only.
+
+## Troubleshooting
+
+| Symptom                                   | Check                                                                                                    |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `Unknown command: POWER_LOSS_STATUS`      | The overlay isn't mounted or Klipper wasn't restarted. Run `ls /usr/share/klipper/klippy/extras/power_loss.py`. |
+| `detection=polling`                       | The ioctl tier failed. Check `klippy.log` for the reason, for example `EBUSY` if something else owns GPIO 192. |
+| Resume prompt never appears               | The prompt is retried for about 20 seconds after boot. Run `POWER_LOSS_RESUME_SAFE` manually.            |
+| Z height wrong after resume               | Verify `homing_override_z_lift` against your `[homing_override]` macro. The console prints the declared Z. |
+| Save never triggers                       | Try `invert_sensor: True`, and watch readings with `POWER_LOSS_TEST_READ N=100`.                         |
+| State file not written                    | Confirm `save_path` is on a writable partition.                                                          |
+
+## Credits and license
+
+This module's design is based on the public work of others:
+
+- **Elegoo's official firmware** (`por.cpp`, `virtual_sdcard.cpp`, `break_save.cpp`, `gpio.h`), GPL-3.0, for the detection mechanism, saved-state fields and GPIO pin numbers.
+- **[KlipperPLR](https://github.com/bigtreetech/KlipperPLR)** (BigTreeTech, forked from Yumi-Lab/Yumi_PLR) for deriving extrude mode and the last `E` value by replaying the G-code file.
+- **[docs.opencentauri.cc](https://docs.opencentauri.cc)** for hardware and architecture documentation.
+- The original community implementation of Power Loss Recovery for the Centauri Carbon, which this module follows in structure and behavior.
+
+Because the design derives from GPL-3.0 sources, distribute this module under the **GPL-3.0** license for consistency.
