@@ -39,11 +39,39 @@ cat <<'EOF'
 
 Now add to printer.cfg:
 
+For the CC1
+
 [power_loss]
 sensor_gpio: 192
+#sensor_pin=host:PG9
 charge_gpio: 65
+#charge_pin=host:PD20
+poll_interval: 0.01
+charge_time: 30
 save_path: /data/power_loss_state.json
+z_hop: 10.0
+travel_speed: 3000
 homing_override_z_lift: 5.0
+purge_mm: 15.0
+move_temp: 200.0
+
+
+For the CC2
+
+[power_loss]
+#sensor_gpio: 192
+sensor_pin=host:PG9
+#charge_gpio: 65
+charge_pin=host:PD20
+poll_interval: 0.01
+charge_time: 30
+save_path: /data/power_loss_state.json
+z_hop: 10.0
+travel_speed: 3000
+homing_override_z_lift: 5.0
+purge_mm: 15.0
+move_temp: 200.0
+
 
 Then: service klipper restart, and run POWER_LOSS_STATUS in the console.
 EOF
