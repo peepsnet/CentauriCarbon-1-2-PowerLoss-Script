@@ -46,11 +46,11 @@ flowchart TD
 
 Pins on the Centauri Carbon 1 mainboard:
 
-| Function                       | SoC port | Linux GPIO | Used by this module |
-| ------------------------------ | -------- | ---------- | ------------------- |
-| Outage detection               | PG0      | 192        | Input (read)        |
-| Supercap charge enable         | PC1      | 65         | Output (control)    |
-| Supercap output to power rail  | PG11     | 203        | **Never used**      |
+| Function                       | CC1 SoC port | CC1 Linux GPIO | CC2 Soc port | CC2 Linux GPIO |Used by this module |
+| ------------------------------ | ------------ | -------------- | ------------ | -------------- | ------------------- |
+| Outage detection               | PG0          | 192            | PG9          |                | Input (read)        |
+| Supercap charge enable         | PC1          | 65             | PD20         |                | Output (control)    |
+| Supercap output to power rail  | PG11         | 203            | PG11         |                | **Never used**      |
 
 > [!IMPORTANT]
 > GPIO 203 enables the supercap's output to the power rail. The module refuses to start if it is configured as either the sensor or charge pin. Don't change that without checking with a multimeter what is on the other side.
