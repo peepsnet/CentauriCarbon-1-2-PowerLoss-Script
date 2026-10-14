@@ -1,5 +1,7 @@
 # power_loss — Power Loss Recovery for Elegoo Centauri Carbon (COSMOS)
 
+##This only works for the CC1 right now. 
+
 A Klipper extras module that detects a real mains power outage using the Centauri Carbon's hardware supercapacitor, saves the state of the print in progress, and lets you resume it once power returns.
 
 > [!WARNING]
@@ -113,6 +115,7 @@ After about 30 seconds it should report `charge_done=True` and show which `detec
 
 Every option has a default. Only declare the ones you want to change.
 
+###CC1
 ```ini
 [power_loss]
 sensor_gpio: 192
@@ -129,6 +132,25 @@ move_temp: 200.0
 wipe: True
 #invert_sensor: False
 ```
+
+###CC2
+```ini
+[power_loss]
+sensor_gpio: 192
+charge_gpio: 65
+poll_interval: 0.01
+debounce_time: 0.05
+charge_time: 30
+save_path: /data/power_loss_state.json
+z_hop: 10.0
+travel_speed: 3000
+homing_override_z_lift: 5.0
+purge_mm: 15.0
+move_temp: 200.0
+wipe: True
+#invert_sensor: False
+```
+
 
 | Option                   | Default                          | Description                                                                                  |
 | ------------------------ | -------------------------------- | -------------------------------------------------------------------------------------------- |
