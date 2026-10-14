@@ -2,7 +2,8 @@
 This is copy of: https://gist.github.com/jagonmo/b14d6420d6d4af3de0ad6a0cdce5524c
 I am working on this working for both the CC1 and CC2. 
 
-## This only works for the CC1 right now. 
+> [!WARNING]
+> This only works for the CC1 right now. 
 
 A Klipper extras module that detects a real mains power outage using the Centauri Carbon's hardware supercapacitor, saves the state of the print in progress, and lets you resume it once power returns.
 
