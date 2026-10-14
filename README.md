@@ -1,6 +1,6 @@
 # power_loss — Power Loss Recovery for Elegoo Centauri Carbon (COSMOS)
 
-##This only works for the CC1 right now. 
+## This only works for the CC1 right now. 
 
 A Klipper extras module that detects a real mains power outage using the Centauri Carbon's hardware supercapacitor, saves the state of the print in progress, and lets you resume it once power returns.
 
