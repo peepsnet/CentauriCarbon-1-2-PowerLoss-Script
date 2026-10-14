@@ -1,4 +1,6 @@
 # power_loss — Power Loss Recovery for Elegoo Centauri Carbon (COSMOS)
+This is copy of: https://gist.github.com/jagonmo/b14d6420d6d4af3de0ad6a0cdce5524c
+I am working on this working for both the CC1 and CC2. 
 
 ## This only works for the CC1 right now. 
 
