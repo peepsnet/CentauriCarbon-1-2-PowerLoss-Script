@@ -1,747 +1,358 @@
-# power_loss.py -- Power Loss Recovery for Elegoo Centauri Carbon (COSMOS)
+#!/bin/sh
+# power_loss installer for the Elegoo Centauri Carbon 1 / 2 (COSMOS).
+# power_loss itself is based on the module by jagonmo:
+#   https://gist.github.com/jagonmo/b14d6420d6d4af3de0ad6a0cdce5524c
 #
-# Klipper "extras" module. Detects a real mains outage through the
-# mainboard's outage-detect GPIO, saves print state to disk using the
-# supercapacitor hold-up time, protects the filesystems, and offers a
-# guided resume on the next boot.
+# Run on the printer as root, straight from GitHub:
 #
-# Supported models (printer_model):
-#   cc1    Centauri Carbon 1 -- known pins, used as defaults:
-#            PG0  -> Linux GPIO 192  outage detect (input)
-#            PC1  -> Linux GPIO 65   supercap charge enable (output)
-#            PG11 -> Linux GPIO 203  supercap output to rail -- NEVER USED
-#   cc2    Centauri Carbon 2 -- pins from Elegoo's printer_dsp.cfg,
-#          converted to Linux numbers. The outage sensor has been confirmed
-#          by a real unplug test on one CC2; the charge pin has not been
-#          independently verified:
-#            PG9  -> Linux GPIO 201  outage detect (input)
-#            PD20 -> Linux GPIO 116  supercap charge enable (output)
-#            PG11 -> Linux GPIO 203  supercap output to rail -- NEVER USED
-#   custom Any other board: sensor_gpio and charge_gpio must be set
-#          explicitly, and rail_gpio should be set so it is guarded.
+#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sh -s -- --model cc2
 #
-# printer.cfg (CC1; the pins shown are the CC1 defaults):
-#   [power_loss]
-#   printer_model: cc1
-#   sensor_gpio: 192
-#   charge_gpio: 65
-#   #rail_gpio: 203             # line that must never be touched
-#   poll_interval: 0.01
-#   debounce_time: 0.05        # outage must persist this long to count
-#   charge_time: 30
-#   save_path: /data/power_loss_state.json
-#   z_hop: 10.0
-#   travel_speed: 3000
-#   homing_override_z_lift: 5.0   # must match "G0 Z<N>" in [homing_override]
-#   purge_mm: 15.0
-#   move_temp: 200.0
-#   wipe: True                 # run the tray wipe pattern (CC1 coordinates)
-#   tray_macro: MOVE_TO_TRAY   # macro that parks at the purge tray; blank
-#                              # skips it
-#   #invert_sensor: False
+# or from a clone:   sh install.sh [options]
 #
-# Commands:
-#   POWER_LOSS_STATUS | POWER_LOSS_RESUME | POWER_LOSS_RESUME_SAFE
-#   POWER_LOSS_DISCARD | POWER_LOSS_TEST_READ N=<n>
+# What it does: downloads power_loss.py, makes Klipper's read-only extras
+# directory writable through an overlay mount, optionally persists that
+# mount across reboots, and prints (or appends) the printer.cfg section for
+# your model. It never restarts Klipper (that would interrupt a print).
 #
-# Detection tiers: raw GPIO v1 ioctl edge events -> sysfs polling fallback.
+# Options:
+#   --model cc1|cc2|custom   skip detection/prompt
+#   --sensor N --charge N --rail N
+#                            Linux GPIO numbers (required for --model custom)
+#   --printer-cfg PATH       append a [power_loss] section to this file
+#                            (backed up first; skipped if one already exists)
+#   --yes, -y                accept the detected model without asking
+#   --no-persist             don't patch the init script (mount lasts until reboot)
+#   --uninstall              remove the module, the init patch and the overlay
+#   --no-mount               copy/patch only, no mount or root checks (testing)
+#   --help, -h               show this text
+#
+# Environment:
+#   POWER_LOSS_REPO=owner/name   GitHub repo to download from
+#   POWER_LOSS_REF=main          branch, tag or commit (pin a tag/commit!)
+#   POWER_LOSS_SHA256=<hex>      require this checksum for power_loss.py
 
-import os
-import re
-import json
-import time
-import fcntl
-import struct
-import logging
-import subprocess
+set -eu
 
-GPIO_SYSFS = "/sys/class/gpio"
-GPIO_CHIP_PATH = "/dev/gpiochip0"
+REPO="${POWER_LOSS_REPO:-YOUR_GITHUB_USER/YOUR_REPO}"
+REF="${POWER_LOSS_REF:-main}"
+RAW_BASE="${POWER_LOSS_RAW_BASE:-https://raw.githubusercontent.com/$REPO/$REF}"
+EXPECTED_SHA256="${POWER_LOSS_SHA256:-}"
 
-# ---- GPIO character device v1 uAPI (linux/gpio.h), stdlib only ----
-_HANDLE_INPUT = 1 << 0
-_EVENT_RISING = 1 << 0
-_EVENT_FALLING = 1 << 1
-_EVENT_BOTH = _EVENT_RISING | _EVENT_FALLING
-_EV_ID_RISING = 0x01
+LOWER="${KLIPPER_EXTRAS_DIR:-/usr/share/klipper/klippy/extras}"
+UPPER="${POWER_LOSS_UPPER:-/data/klipper-extras-upper}"
+WORK="${POWER_LOSS_WORK:-/data/klipper-extras-work}"
+INIT="${KLIPPER_INIT:-/etc/init.d/klipper}"
+MARK_BEGIN="# power_loss-overlay-begin (managed by install.sh)"
+MARK_END="# power_loss-overlay-end"
 
-_EVREQ_FMT = "<3I32si"                 # lineoffset, handleflags, eventflags, label, fd
-_EVREQ_SIZE = struct.calcsize(_EVREQ_FMT)
-_EVDATA_SIZE = 16                      # u64 timestamp + u32 id (+ pad)
-_HANDLE_DATA_SIZE = 64                 # struct gpiohandle_data { u8 values[64]; }
+MODEL=""
+SENSOR=""
+CHARGE=""
+RAIL=""
+PRINTER_CFG=""
+ASSUME_YES=0
+PERSIST=1
+DO_UNINSTALL=0
+NO_MOUNT=0
 
+say()  { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-def _ioc(direction, ioc_type, nr, size):
-    return (direction << 30) | (size << 16) | (ioc_type << 8) | nr
-
-
-_IOC_WRITE, _IOC_READ = 1, 2
-_GET_LINEEVENT_IOCTL = _ioc(_IOC_READ | _IOC_WRITE, 0xB4, 0x04, _EVREQ_SIZE)
-_GET_LINE_VALUES_IOCTL = _ioc(_IOC_READ | _IOC_WRITE, 0xB4, 0x08,
-                              _HANDLE_DATA_SIZE)
-
-
-# Per-model defaults. None means "unknown: the user must set it".
-MODEL_PROFILES = {
-    "cc1": {
-        "sensor_gpio": 192,
-        "charge_gpio": 65,
-        "rail_gpio": 203,
-        "tray_macro": "MOVE_TO_TRAY",
-        "wipe": True,
-    },
-    # CC2: taken from Elegoo's printer_dsp.cfg [por] section
-    # (sensor_pin=host:PG9, charge_pin=host:PD20, ctrl_pin=host:PG11) and
-    # converted with the Allwinner rule 32*(port letter index)+pin, which
-    # reproduces the CC1 numbers. Outage sensor confirmed by an unplug test
-    # on one CC2; charge pin not independently verified.
-    "cc2": {
-        "sensor_gpio": 201,    # PG9
-        "charge_gpio": 116,    # PD20
-        "rail_gpio": 203,      # PG11
-        "tray_macro": "",
-        "wipe": False,
-    },
-    "custom": {
-        "sensor_gpio": None,
-        "charge_gpio": None,
-        "rail_gpio": None,
-        "tray_macro": "",
-        "wipe": False,
-    },
+usage() {
+    if [ -f "$0" ]; then
+        sed -n '2,/^set -eu/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+    else
+        say "Usage: install.sh [--model cc1|cc2|custom] [--sensor N --charge N --rail N]"
+        say "       [--printer-cfg PATH] [--yes] [--no-persist] [--uninstall] [--help]"
+    fi
 }
 
+# ---------------------------------------------------------------- arguments
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --model)         [ $# -ge 2 ] || die "--model needs a value"; MODEL=$2; shift 2 ;;
+        --model=*)       MODEL=${1#--model=}; shift ;;
+        --sensor)        [ $# -ge 2 ] || die "--sensor needs a value"; SENSOR=$2; shift 2 ;;
+        --charge)        [ $# -ge 2 ] || die "--charge needs a value"; CHARGE=$2; shift 2 ;;
+        --rail)          [ $# -ge 2 ] || die "--rail needs a value"; RAIL=$2; shift 2 ;;
+        --printer-cfg)   [ $# -ge 2 ] || die "--printer-cfg needs a path"; PRINTER_CFG=$2; shift 2 ;;
+        --yes|-y)        ASSUME_YES=1; shift ;;
+        --no-persist)    PERSIST=0; shift ;;
+        --uninstall)     DO_UNINSTALL=1; shift ;;
+        --no-mount)      NO_MOUNT=1; shift ;;
+        --help|-h)       usage; exit 0 ;;
+        *)               die "unknown option: $1 (see --help)" ;;
+    esac
+done
 
-class SysfsGpio:
-    """Minimal sysfs GPIO. Klipper's pin system only covers MCU pins;
-    these live on the host SoC."""
+MODEL=$(printf %s "$MODEL" | tr 'A-Z' 'a-z')
+case "$MODEL" in ''|cc1|cc2|custom) ;; *) die "--model must be cc1, cc2 or custom" ;; esac
 
-    def __init__(self, line):
-        self.line = line
-        self.path = "%s/gpio%d" % (GPIO_SYSFS, line)
-        if not os.path.exists(self.path):
-            try:
-                with open("%s/export" % GPIO_SYSFS, "w") as f:
-                    f.write(str(line))
-            except OSError as e:
-                if e.errno != 16:  # EBUSY: already exported
-                    raise
+# When piped into sh, stdin is the script, so prompts must use the terminal.
+TTY=""
+if ( : </dev/tty ) 2>/dev/null; then TTY=/dev/tty; fi
 
-    def set_direction(self, direction):
-        with open("%s/direction" % self.path, "w") as f:
-            f.write(direction)
+ask() {  # ask "prompt" -> REPLY
+    [ -n "$TTY" ] || die "need an answer for: $1 (no terminal available; use the command-line options)"
+    printf '%s' "$1" >&2
+    IFS= read -r REPLY <"$TTY" || REPLY=""
+}
 
-    def read(self):
-        with open("%s/value" % self.path, "r") as f:
-            return int(f.read().strip())
+is_number() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
-    def write(self, value):
-        with open("%s/value" % self.path, "w") as f:
-            f.write("1" if value else "0")
+overlay_mounted() { grep -q '^klipper-extras-overlay ' /proc/mounts 2>/dev/null; }
 
+# ---------------------------------------------------------------- uninstall
+do_uninstall() {
+    [ "$NO_MOUNT" -eq 1 ] || [ "$(id -u)" -eq 0 ] || die "run as root"
+    say "Removing power_loss..."
+    rm -f "$UPPER/power_loss.py"
+    if [ -f "$INIT" ] && grep -q 'power_loss-overlay-begin' "$INIT"; then
+        cp -p "$INIT" "$INIT.bak-power_loss-uninstall"
+        sed '/power_loss-overlay-begin/,/power_loss-overlay-end/d' "$INIT" >"$INIT.new"
+        cat "$INIT.new" >"$INIT"
+        rm -f "$INIT.new"
+        say "Removed the overlay block from $INIT (backup: $INIT.bak-power_loss-uninstall)."
+    fi
+    if [ -d "$UPPER" ] && [ -z "$(ls -A "$UPPER" 2>/dev/null)" ]; then
+        if [ "$NO_MOUNT" -eq 0 ] && overlay_mounted; then
+            umount "$LOWER" || warn "could not unmount $LOWER (is Klipper using it? reboot to clear)"
+        fi
+        rmdir "$UPPER" 2>/dev/null || true
+        rm -rf "$WORK" 2>/dev/null || true
+    else
+        warn "$UPPER still holds other files, so the overlay was left in place."
+    fi
+    say "Done. Remove the [power_loss] section from printer.cfg yourself, then restart Klipper"
+    say "when no print is running. A pending state file (e.g. /data/power_loss_state.json) was left alone."
+    exit 0
+}
 
-class PowerLoss:
-    def __init__(self, config):
-        self.printer = config.get_printer()
-        self.reactor = self.printer.get_reactor()
-        self.gcode = self.printer.lookup_object("gcode")
+[ "$DO_UNINSTALL" -eq 1 ] && do_uninstall
 
-        self.model = config.getchoice(
-            "printer_model", {m: m for m in MODEL_PROFILES}, "cc1")
-        profile = MODEL_PROFILES[self.model]
+# ---------------------------------------------------------------- pre-flight
+if [ "$NO_MOUNT" -eq 0 ]; then
+    [ "$(id -u)" -eq 0 ] || die "run as root"
+    [ -d "$LOWER" ] || die "$LOWER not found: is this a COSMOS printer?"
+    grep -qw overlay /proc/filesystems 2>/dev/null || die "kernel has no overlayfs support"
+    [ -d /sys/class/gpio ] || warn "/sys/class/gpio missing; the module needs sysfs GPIO access"
+fi
 
-        sensor = config.getint("sensor_gpio", profile["sensor_gpio"],
-                               minval=0)
-        charge = config.getint("charge_gpio", profile["charge_gpio"],
-                               minval=0)
-        rail = config.getint("rail_gpio", profile["rail_gpio"], minval=0)
-        if sensor is None or charge is None:
-            raise config.error(
-                "power_loss: printer_model '%s' has no verified default "
-                "GPIOs. Set sensor_gpio and charge_gpio explicitly (and "
-                "rail_gpio, the supercap-output-to-rail line, so it is "
-                "guarded). Wrong pins on a power rail can damage the "
-                "board." % self.model)
-        if self.model == "cc2":
-            logging.warning(
-                "power_loss: cc2 GPIOs (sensor=%d charge=%d rail=%d) come "
-                "from Elegoo's config. The outage sensor was confirmed by an "
-                "unplug test on one CC2; the charge pin is not independently "
-                "verified. Check polarity with POWER_LOSS_TEST_READ.",
-                sensor, charge, rail)
-        if rail is None:
-            logging.warning("power_loss: rail_gpio not set; no GPIO is "
-                            "guarded against accidental use")
-        if sensor == charge:
-            raise config.error("power_loss: sensor_gpio and charge_gpio "
-                               "must differ")
-        # Safety guard: never allow the rail-output pin to be used.
-        if rail is not None and rail in (sensor, charge):
-            raise config.error(
-                "power_loss: GPIO %d is the supercap rail output and "
-                "must not be used as the sensor or charge pin" % rail)
-        self.sensor_line = sensor
-        self.charge_line = charge
-        self.rail_line = rail
+# ---------------------------------------------------------------- detection
+DETECTED=""
+DETECT_WHY=""
 
-        self.tray_macro = config.get("tray_macro",
-                                     profile["tray_macro"]).strip()
-        self.do_wipe = config.getboolean("wipe", profile["wipe"])
-        if self.do_wipe and self.model != "cc1":
-            raise config.error(
-                "power_loss: the built-in wipe pattern uses CC1 "
-                "coordinates and is only allowed with printer_model: cc1. "
-                "Use tray_macro to run your own sequence instead.")
-        self.poll_interval = config.getfloat("poll_interval", 0.01, above=0.)
-        self.debounce_time = config.getfloat("debounce_time", 0.05, minval=0.)
-        self.charge_time = config.getfloat("charge_time", 30., minval=0.)
-        self.invert_sensor = config.getboolean("invert_sensor", False)
-        self.z_hop = config.getfloat("z_hop", 10., minval=0.)
-        self.travel_speed = config.getfloat("travel_speed", 3000., above=0.)
-        self.homing_override_z_lift = config.getfloat(
-            "homing_override_z_lift", 5.)
-        self.purge_mm = config.getfloat("purge_mm", 15., minval=0.)
-        self.move_temp = config.getfloat("move_temp", 200., minval=0.)
-        self.save_path = config.get("save_path", "/data/power_loss_state.json")
+detect_model() {
+    hint=""
+    for f in /proc/device-tree/model /sys/firmware/devicetree/base/model \
+             /etc/hostname /etc/os-release /etc/issue /etc/cosmos-release; do
+        if [ -r "$f" ]; then
+            hint="$hint $(tr -d '\000' <"$f" 2>/dev/null | tr 'A-Z' 'a-z' | tr '\n' ' ')"
+        fi
+    done
+    case "$hint" in
+        *"carbon 2"*|*carbon-2*|*carbon2*|*cc2*)
+            DETECTED=cc2; DETECT_WHY="system identification mentions Centauri Carbon 2" ;;
+        *"centauri carbon"*|*centauri-carbon*|*centauricarbon*|*cc1*)
+            DETECTED=cc1; DETECT_WHY="system identification mentions Centauri Carbon" ;;
+    esac
+    if [ -z "$DETECTED" ]; then
+        # Weak signal: Elegoo's CC2 config talks to a DSP core via rpmsg.
+        for cfg in $(find /data /etc /opt -maxdepth 3 -name 'printer*.cfg' 2>/dev/null | head -n 20); do
+            if grep -q 'rpmsg_ctrl-dsp_rproc' "$cfg" 2>/dev/null; then
+                DETECTED=cc2; DETECT_WHY="$cfg references a DSP rpmsg MCU (CC2-style config)"
+                break
+            fi
+        done
+    fi
+}
 
-        self.charge_pin = SysfsGpio(self.charge_line)
-        self.charge_pin.set_direction("out")
-        self.charge_pin.write(0)  # enabled in klippy:ready
+choose_model() {
+    if [ -n "$MODEL" ]; then return; fi
+    detect_model
+    if [ -n "$DETECTED" ]; then
+        say "Detected: $DETECTED ($DETECT_WHY). This is a best guess."
+        if [ "$ASSUME_YES" -eq 1 ]; then MODEL=$DETECTED; return; fi
+        ask "Use $DETECTED? [Y/n] "
+        case "$REPLY" in ''|y|Y|yes|YES) MODEL=$DETECTED; return ;; esac
+    else
+        say "Could not identify the printer model automatically."
+        [ "$ASSUME_YES" -eq 0 ] || die "cannot auto-select a model; pass --model cc1|cc2|custom"
+    fi
+    say "Which printer is this?"
+    say "  1) Centauri Carbon 1"
+    say "  2) Centauri Carbon 2 (pins from Elegoo's config, not yet confirmed on hardware)"
+    say "  3) Other / custom (you supply the GPIO numbers)"
+    while [ -z "$MODEL" ]; do
+        ask "Choose 1, 2 or 3: "
+        case "$REPLY" in 1) MODEL=cc1 ;; 2) MODEL=cc2 ;; 3) MODEL=custom ;; esac
+    done
+}
 
-        self.charge_done = False
-        self.saved_already = False
-        self.start_time = None
-        self.read_history = []
-        self.read_history_max = 200
-        self.prompt_attempts_left = 0
-        self.last_checkpoint = None
-        self.last_seen_layer = None
-        self.outage_since = None      # monotonic time outage first seen
-        self.debounce_timer = None
+choose_model
 
-        # Edge events must be requested BEFORE any sysfs export of the
-        # sensor line: a GPIO line has one exclusive kernel owner.
-        self.event_fd = self._setup_ioctl_event()
-        if self.event_fd is not None:
-            self.detection_method = "ioctl"
-            self.sensor_pin = None
-            self.reactor.register_fd(self.event_fd, self._handle_gpio_event)
-        else:
-            self.detection_method = "polling"
-            self.sensor_pin = SysfsGpio(self.sensor_line)
-            self.sensor_pin.set_direction("in")
-        logging.info("power_loss: detection=%s", self.detection_method)
+if [ "$MODEL" = custom ]; then
+    [ -n "$SENSOR" ] || { ask "Outage-detect GPIO number: "; SENSOR=$REPLY; }
+    [ -n "$CHARGE" ] || { ask "Supercap charge-enable GPIO number: "; CHARGE=$REPLY; }
+    [ -n "$RAIL" ]   || { ask "Supercap output-to-rail GPIO number (guarded, never driven; blank if unknown): "; RAIL=$REPLY; }
+    is_number "$SENSOR" || die "sensor GPIO must be a number"
+    is_number "$CHARGE" || die "charge GPIO must be a number"
+    [ -z "$RAIL" ] || is_number "$RAIL" || die "rail GPIO must be a number"
+    [ "$SENSOR" != "$CHARGE" ] || die "sensor and charge GPIO must differ"
+    [ -z "$RAIL" ] || { [ "$RAIL" != "$SENSOR" ] && [ "$RAIL" != "$CHARGE" ]; } \
+        || die "the rail GPIO must not be the sensor or charge pin"
+fi
 
-        self.printer.register_event_handler("klippy:ready", self._handle_ready)
-        self.printer.register_event_handler("klippy:disconnect",
-                                            self._handle_disconnect)
+say "Installing for: $MODEL"
+if [ "$MODEL" = cc2 ]; then
+    warn "CC2 pin defaults are derived from Elegoo's config and NOT yet confirmed on hardware."
+    warn "Read the README's CC2 section and verify sensor polarity before relying on this."
+fi
 
-        reg = self.gcode.register_command
-        reg("POWER_LOSS_STATUS", self.cmd_STATUS,
-            desc="Show power loss monitor status")
-        reg("POWER_LOSS_RESUME", self.cmd_RESUME,
-            desc="Resume using the precise instant-of-outage position")
-        reg("POWER_LOSS_RESUME_SAFE", self.cmd_RESUME_SAFE,
-            desc="Resume from the last completed layer")
-        reg("POWER_LOSS_DISCARD", self.cmd_DISCARD,
-            desc="Discard saved power loss state")
-        reg("POWER_LOSS_TEST_READ", self.cmd_TEST_READ,
-            desc="Show recent sensor readings")
+# ---------------------------------------------------------------- get module
+TMPD=$(mktemp -d 2>/dev/null || { mkdir -p "/tmp/power_loss.$$" && echo "/tmp/power_loss.$$"; })
+trap 'rm -rf "$TMPD"' EXIT INT TERM
+MODULE="$TMPD/power_loss.py"
 
-    # ------------------------------------------------------------------
-    # Detection setup
-    # ------------------------------------------------------------------
-    def _setup_ioctl_event(self):
-        try:
-            chip_fd = os.open(GPIO_CHIP_PATH, os.O_RDONLY)
-        except OSError as e:
-            logging.warning("power_loss: can't open %s: %s", GPIO_CHIP_PATH, e)
-            return None
-        try:
-            label = b"power_loss".ljust(32, b"\x00")
-            req = struct.pack(_EVREQ_FMT, self.sensor_line, _HANDLE_INPUT,
-                              _EVENT_BOTH, label, 0)
-            res = fcntl.ioctl(chip_fd, _GET_LINEEVENT_IOCTL, req)
-            fd = struct.unpack(_EVREQ_FMT, res)[-1]
-            os.set_blocking(fd, False)
-            return fd
-        except Exception as e:
-            logging.warning("power_loss: ioctl edge setup failed (%s); "
-                            "falling back to polling", e)
-            return None
-        finally:
-            os.close(chip_fd)
+fetch() {  # fetch URL DEST
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 2 -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$2" "$1"
+    else
+        die "neither curl nor wget is available"
+    fi
+}
 
-    def _read_level(self):
-        """Current logical sensor level (0/1), or None on failure."""
-        try:
-            if self.sensor_pin is not None:
-                return self.sensor_pin.read()
-            buf = fcntl.ioctl(self.event_fd, _GET_LINE_VALUES_IOCTL,
-                              b"\x00" * _HANDLE_DATA_SIZE)
-            return buf[0]
-        except Exception as e:
-            logging.error("power_loss: sensor read failed: %s", e)
-            return None
+if [ -f "$0" ] && [ -f "$(dirname -- "$0")/power_loss.py" ]; then
+    say "Using local $(dirname -- "$0")/power_loss.py"
+    cp "$(dirname -- "$0")/power_loss.py" "$MODULE"
+else
+    if [ -z "${POWER_LOSS_RAW_BASE:-}" ]; then
+        case "$REPO" in YOUR_GITHUB_USER/*) die "set POWER_LOSS_REPO=owner/name (this script still has the placeholder repo)" ;; esac
+    fi
+    say "Downloading $RAW_BASE/power_loss.py"
+    fetch "$RAW_BASE/power_loss.py" "$MODULE" || die "download failed (check network, repo and ref)"
+fi
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-    def _handle_ready(self):
-        self.charge_pin.write(1)
-        self.start_time = self.reactor.monotonic()
-        self.timer = self.reactor.register_timer(self._poll, self.reactor.NOW)
-        logging.info("power_loss: charging supercap (%.0fs)", self.charge_time)
-        if os.path.exists(self.save_path):
-            # No reliable "UI connected" signal, so resend the idempotent
-            # prompt a few times during the first ~20s.
-            self.prompt_attempts_left = 6
-            self.reactor.register_timer(self._show_resume_prompt,
-                                        self.reactor.monotonic() + 2.)
+[ -s "$MODULE" ] || die "power_loss.py is empty"
+grep -q 'def load_config' "$MODULE" || die "downloaded file does not look like the power_loss module"
+if [ -n "$EXPECTED_SHA256" ]; then
+    command -v sha256sum >/dev/null 2>&1 || die "POWER_LOSS_SHA256 set but sha256sum is missing"
+    actual=$(sha256sum "$MODULE" | cut -d' ' -f1)
+    [ "$actual" = "$EXPECTED_SHA256" ] || die "checksum mismatch (got $actual)"
+fi
+if command -v python3 >/dev/null 2>&1; then
+    python3 -m py_compile "$MODULE" 2>/dev/null || die "power_loss.py failed a Python syntax check"
+    rm -rf "$TMPD/__pycache__"
+fi
 
-    def _handle_disconnect(self):
-        try:
-            self.charge_pin.write(0)
-        except Exception:
-            pass
-        if self.event_fd is not None:
-            try:
-                self.reactor.unregister_fd(self.event_fd)
-                os.close(self.event_fd)
-            except Exception:
-                pass
-            self.event_fd = None
+# ---------------------------------------------------------------- install
+mkdir -p "$UPPER" "$WORK"
+cp "$MODULE" "$UPPER/power_loss.py"
+say "Copied module to $UPPER/power_loss.py"
 
-    def _show_resume_prompt(self, eventtime):
-        if self.prompt_attempts_left <= 0 or not os.path.exists(self.save_path):
-            return self.reactor.NEVER
-        self.prompt_attempts_left -= 1
-        msgs = [
-            "action:prompt_begin Interrupted Print",
-            "action:prompt_text A power outage was detected during a print. "
-            "Resume precisely, resume from the last completed layer "
-            "(safer, repeats part of a layer), or discard?",
-            "action:prompt_footer_button Resume Precise|POWER_LOSS_RESUME",
-            "action:prompt_footer_button Resume Safe|"
-            "POWER_LOSS_RESUME_SAFE|primary",
-            "action:prompt_footer_button Discard|POWER_LOSS_DISCARD",
-            "action:prompt_show",
-        ]
-        try:
-            for m in msgs:
-                self.gcode.run_script_from_command(
-                    'RESPOND TYPE=command MSG="%s"' % m)
-        except Exception as e:
-            logging.error("power_loss: prompt failed: %s", e)
-        if self.prompt_attempts_left <= 0:
-            return self.reactor.NEVER
-        return eventtime + 3.
+if [ "$NO_MOUNT" -eq 0 ]; then
+    if ! overlay_mounted; then
+        mount -t overlay klipper-extras-overlay \
+            -o "lowerdir=$LOWER,upperdir=$UPPER,workdir=$WORK" "$LOWER" \
+            || die "overlay mount failed"
+        say "Mounted overlay over $LOWER"
+    else
+        say "Overlay already mounted"
+    fi
+    [ -f "$LOWER/power_loss.py" ] || die "module not visible in $LOWER after mounting"
+fi
 
-    # ------------------------------------------------------------------
-    # Polling / event handling
-    # ------------------------------------------------------------------
-    def _record(self, raw):
-        self.read_history.append(raw)
-        if len(self.read_history) > self.read_history_max:
-            self.read_history.pop(0)
+# ---------------------------------------------------------------- persistence
+patch_init() {
+    if [ ! -f "$INIT" ]; then
+        warn "$INIT not found; add the overlay mount to your boot sequence yourself."
+        return
+    fi
+    if grep -q 'power_loss-overlay-begin' "$INIT"; then
+        say "$INIT already patched"
+        return
+    fi
+    if grep -q 'klipper-extras-overlay' "$INIT"; then
+        warn "$INIT already mounts klipper-extras-overlay (from an earlier install?). Left unchanged; check it by hand."
+        return
+    fi
+    BLOCK="$TMPD/block"
+    {
+        echo "    $MARK_BEGIN"
+        echo "    if ! grep -q '^klipper-extras-overlay ' /proc/mounts; then"
+        echo "        mount -t overlay klipper-extras-overlay \\"
+        echo "            -o lowerdir=$LOWER,upperdir=$UPPER,workdir=$WORK $LOWER"
+        echo "    fi"
+        echo "    $MARK_END"
+    } >"$BLOCK"
+    cp -p "$INIT" "$INIT.bak-power_loss"
+    awk -v blk="$BLOCK" '
+        { print }
+        /^[ \t]*start\)/ && !done {
+            while ((getline line < blk) > 0) print line
+            close(blk); done = 1
+        }' "$INIT.bak-power_loss" >"$TMPD/init.new"
+    if grep -q 'power_loss-overlay-begin' "$TMPD/init.new"; then
+        cat "$TMPD/init.new" >"$INIT"
+        say "Patched $INIT (backup: $INIT.bak-power_loss). Review it before rebooting."
+        say "A COSMOS update may overwrite it; re-run this installer afterwards."
+    else
+        rm -f "$INIT.bak-power_loss"
+        warn "no 'start)' block found in $INIT, so it was not patched."
+        warn "Add this inside your start sequence yourself:"
+        cat "$BLOCK" >&2
+    fi
+}
 
-    def _is_outage(self, raw):
-        return bool(raw) != self.invert_sensor
+if [ "$PERSIST" -eq 1 ]; then patch_init; else say "Skipped init patch (--no-persist): the mount will not survive a reboot."; fi
 
-    def _poll(self, eventtime):
-        if (not self.charge_done and self.start_time is not None
-                and eventtime - self.start_time > self.charge_time):
-            self.charge_done = True
-            logging.info("power_loss: supercap charge complete")
+# ---------------------------------------------------------------- printer.cfg
+make_snippet() {
+    echo "[power_loss]"
+    echo "printer_model: $MODEL"
+    if [ "$MODEL" = custom ]; then
+        echo "sensor_gpio: $SENSOR"
+        echo "charge_gpio: $CHARGE"
+        [ -z "$RAIL" ] || echo "rail_gpio: $RAIL"
+    fi
+    echo "save_path: /data/power_loss_state.json"
+    echo "# Must match the Z lift in your [homing_override]:"
+    echo "homing_override_z_lift: 5.0"
+    if [ "$MODEL" = cc2 ]; then
+        echo "# CC2: check polarity with POWER_LOSS_TEST_READ N=100 (mains on)."
+        echo "# If every reading is 1, uncomment:"
+        echo "#invert_sensor: True"
+    fi
+}
 
-        self._check_layer_change()
+SNIPPET="$TMPD/snippet.cfg"
+make_snippet >"$SNIPPET"
 
-        if self.sensor_pin is not None and not self.saved_already:
-            raw = self._read_level()
-            if raw is not None:
-                self._record(raw)
-                self._evaluate(eventtime, self._is_outage(raw))
-        return eventtime + self.poll_interval
+if [ -n "$PRINTER_CFG" ]; then
+    [ -f "$PRINTER_CFG" ] || die "$PRINTER_CFG not found"
+    if grep -q '^\[power_loss\]' "$PRINTER_CFG"; then
+        warn "$PRINTER_CFG already has a [power_loss] section; not touching it."
+    else
+        cp -p "$PRINTER_CFG" "$PRINTER_CFG.bak-power_loss"
+        { echo; cat "$SNIPPET"; } >>"$PRINTER_CFG"
+        say "Appended [power_loss] to $PRINTER_CFG (backup: $PRINTER_CFG.bak-power_loss)."
+    fi
+else
+    say ""
+    say "Add this to printer.cfg:"
+    say ""
+    cat "$SNIPPET"
+fi
 
-    def _handle_gpio_event(self, eventtime):
-        try:
-            data = os.read(self.event_fd, _EVDATA_SIZE)
-            _, ev_id = struct.unpack("<QI", data[:12])
-            raw = 1 if ev_id == _EV_ID_RISING else 0
-        except BlockingIOError:
-            return
-        except Exception as e:
-            logging.error("power_loss: event read failed: %s", e)
-            return
-        self._record(raw)
-        if self.saved_already:
-            return
-        if self._is_outage(raw):
-            self._evaluate(eventtime, True)
-            if self.outage_since is not None and self.debounce_timer is None:
-                self.debounce_timer = self.reactor.register_timer(
-                    self._debounce_check,
-                    self.reactor.monotonic() + self.debounce_time)
-        else:
-            self.outage_since = None
-
-    def _evaluate(self, eventtime, outage):
-        """Debounce for the polling tier: outage must persist."""
-        if not outage:
-            self.outage_since = None
-            return
-        if self.outage_since is None:
-            self.outage_since = eventtime
-        if eventtime - self.outage_since >= self.debounce_time:
-            self._on_power_loss()
-
-    def _debounce_check(self, eventtime):
-        """Edge tier: re-read the level after debounce_time."""
-        self.debounce_timer = None
-        if self.saved_already or self.outage_since is None:
-            return self.reactor.NEVER
-        raw = self._read_level()
-        # If we can't read the level, trust the edge (fail towards saving).
-        if raw is None or self._is_outage(raw):
-            self._on_power_loss()
-        else:
-            self.outage_since = None
-        return self.reactor.NEVER
-
-    # ------------------------------------------------------------------
-    # State capture
-    # ------------------------------------------------------------------
-    def _print_state(self):
-        try:
-            ps = self.printer.lookup_object("print_stats")
-            return ps.get_status(self.reactor.monotonic()).get("state")
-        except Exception:
-            return None
-
-    def _check_layer_change(self):
-        try:
-            ps = self.printer.lookup_object("print_stats")
-            info = ps.get_status(self.reactor.monotonic()).get("info", {})
-            layer = info.get("current_layer")
-        except Exception:
-            return
-        if layer is None or layer == self.last_seen_layer:
-            return
-        self.last_seen_layer = layer
-        snap = self._snapshot_position()
-        if snap is not None:
-            snap["layer"] = layer
-            self.last_checkpoint = snap
-
-    def _snapshot_position(self):
-        snap = {}
-        now = self.reactor.monotonic()
-        try:
-            gm = self.printer.lookup_object("gcode_move")
-            st = gm.get_status(now)
-            snap["gcode_position"] = list(st["gcode_position"])
-            snap["speed_factor"] = st.get("speed_factor")
-            snap["absolute_extrude"] = st.get("absolute_extrude")
-        except Exception:
-            try:
-                th = self.printer.lookup_object("toolhead")
-                snap["gcode_position"] = list(th.get_position())
-            except Exception:
-                return None
-        try:
-            vsd = self.printer.lookup_object("virtual_sdcard")
-            snap["file_path"] = vsd.get_status(now).get("file_path")
-            snap["file_position"] = vsd.file_position
-        except Exception:
-            return None
-        return snap
-
-    def _collect_state(self):
-        now = self.reactor.monotonic()
-        state = {"timestamp": time.time()}
-        try:
-            heaters = self.printer.lookup_object("heaters")
-            for name in ("extruder", "heater_bed"):
-                try:
-                    h = heaters.lookup_heater(name)
-                    state[name + "_target"] = h.get_temp(now)[1]
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        try:
-            ps = self.printer.lookup_object("print_stats")
-            state["print_duration"] = ps.get_status(now).get("print_duration")
-        except Exception:
-            pass
-        try:
-            fan = self.printer.lookup_object("fan")
-            state["fan_speed"] = fan.get_status(now).get("speed")
-        except Exception:
-            pass
-        state["instant"] = self._snapshot_position()
-        state["checkpoint"] = self.last_checkpoint
-        return state
-
-    # ------------------------------------------------------------------
-    # The outage handler
-    # ------------------------------------------------------------------
-    def _on_power_loss(self):
-        if self.saved_already:
-            return
-        self.saved_already = True
-        logging.warning("power_loss: OUTAGE DETECTED")
-
-        printing = self._print_state() in ("printing", "paused")
-        if printing:
-            state = self._collect_state()
-            tmp = self.save_path + ".tmp"
-            try:
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-                try:
-                    os.write(fd, json.dumps(state).encode("utf-8"))
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-                os.rename(tmp, self.save_path)  # atomic replace
-            except OSError as e:
-                logging.error("power_loss: failed to write state: %s", e)
-        else:
-            logging.info("power_loss: not printing, skipping state save")
-
-        try:
-            self.gcode.run_script_from_command("TURN_OFF_HEATERS")
-        except Exception as e:
-            logging.error("power_loss: heaters off failed: %s", e)
-
-        self._protect_filesystems()
-
-    def _protect_filesystems(self):
-        """sync, then remount writable ext*/FAT mounts read-only. No
-        shutdown: some PMICs here need a physical replug to boot again."""
-        try:
-            subprocess.call(["sync"])
-        except Exception as e:
-            logging.error("power_loss: sync failed: %s", e)
-        try:
-            with open("/proc/mounts") as f:
-                mounts = f.readlines()
-        except OSError as e:
-            logging.error("power_loss: can't read /proc/mounts: %s", e)
-            return
-        for line in mounts:
-            parts = line.split()
-            if len(parts) < 4:
-                continue
-            mountpoint, fstype, options = parts[1], parts[2], parts[3]
-            if fstype not in ("ext2", "ext3", "ext4", "vfat", "fat", "exfat"):
-                continue
-            if "rw" not in options.split(","):
-                continue
-            try:
-                subprocess.call(["mount", "-o", "remount,ro", mountpoint])
-                logging.warning("power_loss: remounted %s read-only",
-                                mountpoint)
-            except Exception as e:
-                logging.error("power_loss: remount %s failed: %s",
-                              mountpoint, e)
-
-    # ------------------------------------------------------------------
-    # Resume
-    # ------------------------------------------------------------------
-    def _derive_extrude_state(self, file_path, file_position):
-        """Replay the gcode file up to file_position to find the extrude
-        mode (M82/M83) and last absolute E. Returns (last_e, absolute)
-        or (None, None) if unreadable."""
-        absolute = True
-        last_e = None
-        e_re = re.compile(r"E(-?[0-9.]+)")
-        try:
-            with open(file_path, "rb") as f:
-                read = 0
-                for raw in f:
-                    read += len(raw)
-                    if read > file_position:
-                        break
-                    line = raw.decode("utf-8", "ignore").strip().upper()
-                    if not line or line.startswith(";"):
-                        continue
-                    if line.startswith("M83"):
-                        absolute = False
-                    elif line.startswith("M82"):
-                        absolute = True
-                    elif line.startswith(("G0", "G1", "G92")):
-                        m = e_re.search(line)
-                        if m and (line.startswith("G92") or absolute):
-                            try:
-                                last_e = float(m.group(1))
-                            except ValueError:
-                                pass
-        except OSError as e:
-            logging.error("power_loss: gcode replay failed: %s", e)
-            return None, None
-        return last_e, absolute
-
-    def _run(self, script):
-        self.gcode.run_script_from_command(script)
-
-    def _do_resume(self, gcmd, package_name):
-        if not os.path.exists(self.save_path):
-            raise gcmd.error("power_loss: no saved state at %s"
-                             % self.save_path)
-        with open(self.save_path) as f:
-            full = json.load(f)
-
-        pkg = full.get(package_name)
-        if package_name == "checkpoint" and not pkg:
-            gcmd.respond_info("power_loss: no layer checkpoint (outage before "
-                              "first layer) -- using precise capture")
-            pkg, package_name = full.get("instant"), "instant"
-        if not pkg:
-            raise gcmd.error("power_loss: no usable position data")
-
-        missing = [k for k in ("gcode_position", "file_path", "file_position")
-                   if k not in pkg]
-        if missing:
-            raise gcmd.error("power_loss: incomplete '%s' package, missing: %s"
-                             % (package_name, ", ".join(missing)))
-        if not os.path.exists(pkg["file_path"]):
-            raise gcmd.error("power_loss: gcode file not found: %s"
-                             % pkg["file_path"])
-
-        gcmd.respond_info("power_loss: resuming from '%s' data" % package_name)
-        self.prompt_attempts_left = 0
-        self._run('RESPOND TYPE=command MSG="action:prompt_end"')
-
-        x, y, z = pkg["gcode_position"][0:3]
-
-        file_e, file_abs = self._derive_extrude_state(
-            pkg["file_path"], pkg["file_position"])
-        if file_abs is None:
-            absolute = pkg.get("absolute_extrude", True)
-            e = (pkg["gcode_position"][3]
-                 if len(pkg["gcode_position"]) > 3 else 0.)
-        else:
-            absolute = file_abs
-            e = file_e if file_e is not None else 0.
-
-        ext_t = full.get("extruder_target")
-        bed_t = full.get("heater_bed_target")
-
-        # 1. Nozzle to a movement-safe temp (may be stuck to the part).
-        gcmd.respond_info("power_loss: heating nozzle before moving...")
-        if bed_t:
-            self._run("M140 S%.1f" % bed_t)
-        if ext_t:
-            self._run("M104 S%.1f" % ext_t)
-            self._run("TEMPERATURE_WAIT SENSOR=extruder MINIMUM=%.1f"
-                      % min(self.move_temp, ext_t))
-
-        # 2. Real X/Y homing. Z is trusted from the save, hop for clearance.
-        gcmd.respond_info("power_loss: hop + homing X Y...")
-        self._run("SET_KINEMATIC_POSITION Z=%.3f" % z)
-        self._run("G91")
-        self._run("G1 Z%.1f F%.0f" % (self.z_hop, self.travel_speed))
-        self._run("G90")
-        self._run("G28 X Y")
-
-        # [homing_override] zeroes Z and lifts by a known amount; fix up.
-        z_true = z + self.z_hop + self.homing_override_z_lift
-        self._run("SET_KINEMATIC_POSITION Z=%.3f" % z_true)
-        gcmd.respond_info("power_loss: saved_z=%.3f -> declared Z=%.3f "
-                          "(verify physically)" % (z, z_true))
-
-        # 3. Full temps, then purge/wipe at the tray.
-        if bed_t:
-            self._run("M190 S%.1f" % bed_t)
-        if ext_t:
-            self._run("M109 S%.1f" % ext_t)
-        if self.tray_macro:
-            gcmd.respond_info("power_loss: purging at the tray...")
-            self._run(self.tray_macro)
-            self._run("M83")
-            self._run("G1 E%.1f F300" % self.purge_mm)
-            self._run("M400")
-        else:
-            # Never purge in place: the nozzle is over the part/bed.
-            gcmd.respond_info("power_loss: no tray_macro set, skipping "
-                              "purge and wipe")
-        if self.tray_macro and self.do_wipe:
-            lines = ["G1 F9000"]
-            for _ in range(4):
-                for i in range(8):
-                    lines.append("G1 X%d Y%d" % (187 - i * 2,
-                                                 265 if i % 2 == 0 else 263))
-                lines += ["G1 X187", "G1 Y263"]
-            lines.append("M400")
-            self._run("\n".join(lines))
-
-        # 4. Travel back (elevated), lower, restore extruder/fan/speed.
-        gcmd.respond_info("power_loss: moving to X=%.2f Y=%.2f Z=%.3f"
-                          % (x, y, z))
-        self._run("G1 X%.3f Y%.3f F%.0f" % (x, y, self.travel_speed))
-        self._run("G1 Z%.3f F%.0f" % (z, self.travel_speed / 4.))
-
-        if absolute:
-            self._run("G92 E%.5f" % e)
-            self._run("M82")
-        else:
-            self._run("G92 E0")
-            self._run("M83")
-
-        fan = full.get("fan_speed")
-        if fan is not None:
-            self._run("M106 S%d" % round(fan * 255))
-        sf = pkg.get("speed_factor")
-        if sf:
-            self._run("M220 S%.1f" % (sf * 100.))
-
-        # 5. Reload file at the saved offset and go.
-        self._run("M23 %s" % os.path.basename(pkg["file_path"]))
-        self._run("M26 S%d" % pkg["file_position"])
-        gcmd.respond_info("power_loss: resuming print")
-        self._run("M24")
-
-        try:
-            os.remove(self.save_path)
-        except OSError as e:
-            logging.error("power_loss: couldn't remove state file: %s", e)
-        self.saved_already = False
-        self.outage_since = None
-
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
-    def cmd_STATUS(self, gcmd):
-        gcmd.respond_info(
-            "model=%s sensor=GPIO%d charge=GPIO%d rail_guard=%s "
-            "charge_done=%s saved=%s pending_resume=%s detection=%s"
-            % (self.model, self.sensor_line, self.charge_line,
-               self.rail_line, self.charge_done,
-               self.saved_already, os.path.exists(self.save_path),
-               self.detection_method))
-
-    def cmd_DISCARD(self, gcmd):
-        self.prompt_attempts_left = 0
-        self._run('RESPOND TYPE=command MSG="action:prompt_end"')
-        if os.path.exists(self.save_path):
-            os.remove(self.save_path)
-            gcmd.respond_info("power_loss: state discarded")
-        else:
-            gcmd.respond_info("power_loss: no saved state")
-
-    def cmd_RESUME(self, gcmd):
-        self._do_resume(gcmd, "instant")
-
-    def cmd_RESUME_SAFE(self, gcmd):
-        self._do_resume(gcmd, "checkpoint")
-
-    def cmd_TEST_READ(self, gcmd):
-        n = gcmd.get_int("N", 50, minval=1, maxval=self.read_history_max)
-        vals = self.read_history[-n:]
-        gcmd.respond_info("last %d readings: %s (ones=%d of %d)"
-                          % (len(vals), vals, sum(vals), len(vals)))
-
-
-def load_config(config):
-    return PowerLoss(config)
+say ""
+say "Next steps:"
+say "  1. Restart Klipper when NO print is running (the installer never does this for you)."
+say "  2. Run POWER_LOSS_STATUS in the console; after ~30 s it should show charge_done=True."
+if [ "$MODEL" = cc2 ]; then
+    say "  3. CC2: verify the sensor with POWER_LOSS_TEST_READ N=100 before trusting a save."
+fi
+say "  To remove everything later: sh install.sh --uninstall"
