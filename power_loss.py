@@ -1,5 +1,27 @@
 # power_loss.py -- Power Loss Recovery for Elegoo Centauri Carbon (COSMOS)
 #
+# ORIGINAL AUTHOR: jagonmo
+#   https://gist.github.com/jagonmo/b14d6420d6d4af3de0ad6a0cdce5524c
+# This module is a derivative of jagonmo's "power_loss" Klipper module.
+# The idea, the reverse engineering of Elegoo's firmware, the pin research,
+# the module design (instant + layer-checkpoint state, POWER_LOSS_RESUME /
+# POWER_LOSS_RESUME_SAFE), the resume sequence (nozzle reheat, real X/Y
+# homing, Z correction for [homing_override], tray purge/wipe), the real
+# power-cut testing on a Centauri Carbon 1, and the command and option
+# names are all jagonmo's work. Thank you.
+#
+# Changes in this version: printer_model profiles (CC1 / CC2 / custom),
+# configurable rail-pin guard, outage debounce, atomic state save, save only
+# while printing, configurable tray macro, and an installer.
+#
+# Upstream credits carried over from the original: Elegoo's official firmware
+# and CC2 config (GPL-3.0), KlipperPLR by BigTreeTech (forked from
+# Yumi-Lab/Yumi_PLR) for the G-code replay technique, and
+# docs.opencentauri.cc.
+#
+# License: GPL-3.0, as recommended by the original, because the design derives
+# from Elegoo's GPL-3.0 sources. Keep these notices if you redistribute.
+#
 # Klipper "extras" module. Detects a real mains outage through the
 # mainboard's outage-detect GPIO, saves print state to disk using the
 # supercapacitor hold-up time, protects the filesystems, and offers a
@@ -11,7 +33,9 @@
 #            PC1  -> Linux GPIO 65   supercap charge enable (output)
 #            PG11 -> Linux GPIO 203  supercap output to rail -- NEVER USED
 #   cc2    Centauri Carbon 2 -- pins from Elegoo's printer_dsp.cfg,
-#          converted to Linux numbers, NOT yet confirmed on hardware:
+#          converted to Linux numbers. The outage sensor has been confirmed
+#          by a real unplug test on one CC2; the charge pin has not been
+#          independently verified:
 #            PG9  -> Linux GPIO 201  outage detect (input)
 #            PD20 -> Linux GPIO 116  supercap charge enable (output)
 #            PG11 -> Linux GPIO 203  supercap output to rail -- NEVER USED
@@ -91,7 +115,8 @@ MODEL_PROFILES = {
     # CC2: taken from Elegoo's printer_dsp.cfg [por] section
     # (sensor_pin=host:PG9, charge_pin=host:PD20, ctrl_pin=host:PG11) and
     # converted with the Allwinner rule 32*(port letter index)+pin, which
-    # reproduces the CC1 numbers. Not yet confirmed on a running CC2.
+    # reproduces the CC1 numbers. Outage sensor confirmed by an unplug test
+    # on one CC2; charge pin not independently verified.
     "cc2": {
         "sensor_gpio": 201,    # PG9
         "charge_gpio": 116,    # PD20
@@ -161,10 +186,10 @@ class PowerLoss:
                 "board." % self.model)
         if self.model == "cc2":
             logging.warning(
-                "power_loss: cc2 GPIOs (sensor=%d charge=%d rail=%d) are "
-                "derived from Elegoo's config and not yet confirmed on "
-                "hardware. Verify the sensor polarity with "
-                "POWER_LOSS_TEST_READ before trusting a save.",
+                "power_loss: cc2 GPIOs (sensor=%d charge=%d rail=%d) come "
+                "from Elegoo's config. The outage sensor was confirmed by an "
+                "unplug test on one CC2; the charge pin is not independently "
+                "verified. Check polarity with POWER_LOSS_TEST_READ.",
                 sensor, charge, rail)
         if rail is None:
             logging.warning("power_loss: rail_gpio not set; no GPIO is "
