@@ -5,8 +5,8 @@
 #
 # Run on the printer as root, straight from GitHub:
 #
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sh -s -- --model cc2
+#   curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc2
 #
 # or from a clone:   sh install.sh [options]
 #
@@ -28,13 +28,13 @@
 #   --help, -h               show this text
 #
 # Environment:
-#   POWER_LOSS_REPO=owner/name   GitHub repo to download from
+#   POWER_LOSS_REPO=owner/name   GitHub repo to download from (default: peepsnet/CentauriCarbon-1-2-PowerLoss-Script)
 #   POWER_LOSS_REF=main          branch, tag or commit (pin a tag/commit!)
 #   POWER_LOSS_SHA256=<hex>      require this checksum for power_loss.py
 
 set -eu
 
-REPO="${POWER_LOSS_REPO:-YOUR_GITHUB_USER/YOUR_REPO}"
+REPO="${POWER_LOSS_REPO:-peepsnet/CentauriCarbon-1-2-PowerLoss-Script}"
 REF="${POWER_LOSS_REF:-main}"
 RAW_BASE="${POWER_LOSS_RAW_BASE:-https://raw.githubusercontent.com/$REPO/$REF}"
 EXPECTED_SHA256="${POWER_LOSS_SHA256:-}"
@@ -230,9 +230,6 @@ if [ -f "$0" ] && [ -f "$(dirname -- "$0")/power_loss.py" ]; then
     say "Using local $(dirname -- "$0")/power_loss.py"
     cp "$(dirname -- "$0")/power_loss.py" "$MODULE"
 else
-    if [ -z "${POWER_LOSS_RAW_BASE:-}" ]; then
-        case "$REPO" in YOUR_GITHUB_USER/*) die "set POWER_LOSS_REPO=owner/name (this script still has the placeholder repo)" ;; esac
-    fi
     say "Downloading $RAW_BASE/power_loss.py"
     fetch "$RAW_BASE/power_loss.py" "$MODULE" || die "download failed (check network, repo and ref)"
 fi
