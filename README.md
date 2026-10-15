@@ -99,8 +99,6 @@ COSMOS's root filesystem is read-only, so the module is installed through an ove
 
 ### One-line install
 
-Replace `OWNER/REPO` with this repository, and pin a tag or commit instead of `main` if you can:
-
 ```sh
 curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh
 ```
