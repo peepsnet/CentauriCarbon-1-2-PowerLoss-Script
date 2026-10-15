@@ -2,6 +2,9 @@
 
 A Klipper extras module that detects a real mains power outage using the Centauri Carbon's hardware supercapacitor, saves the state of the print in progress, and lets you resume it once power returns.
 
+> [!IMPORTANT]
+> **Original author: [jagonmo](https://gist.github.com/jagonmo).** This project is a derivative of jagonmo's [`power_loss` module](https://gist.github.com/jagonmo/b14d6420d6d4af3de0ad6a0cdce5524c). jagonmo reverse engineered Elegoo's firmware, found the pins, designed the module, and proved it end to end with a real power cut on a Centauri Carbon 1. Nearly everything here builds on that work. See [Credits](#credits-and-license) for details.
+
 | Model                    | Status                                                                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------ |
 | Centauri Carbon 1 (CC1)  | Built-in defaults (`printer_model: cc1`).                                                        |
@@ -63,7 +66,7 @@ Linux GPIO numbers use the Allwinner rule `32 × (port letter index, A=0) + pin`
 > [!IMPORTANT]
 > The "supercap output to rail" line connects the supercap to the power rail. The module refuses to start if the configured `rail_gpio` is also used as the sensor or charge pin. On both CC1 and CC2 that is GPIO 203 and is guarded by default. Don't remove that guard without checking with a multimeter what is on the other side.
 
-Reported behavior from a real outage test on a CC1: with the supercap charged, the SoC stayed alive for roughly 5–15 seconds. Whether motors and heaters keep any residual power is **unconfirmed**, so the module assumes they don't and only moves the toolhead on resume.
+jagonmo reported this from a real outage test on a CC1 with mains fully unplugged: with the supercap charged, the SoC stayed alive for roughly 5–15 seconds. Whether motors and heaters keep any residual power is **unconfirmed**, so the module assumes they don't and only moves the toolhead on resume.
 
 ## Centauri Carbon 2
 
@@ -326,11 +329,31 @@ The state file contains two position packages: `instant` (captured at the outage
 
 ## Credits and license
 
-This module's design is based on the public work of others:
+### Original author: jagonmo
 
-- **Elegoo's official firmware** (`por.cpp`, `virtual_sdcard.cpp`, `break_save.cpp`, `gpio.h`), GPL-3.0, for the detection mechanism, saved-state fields and GPIO pin numbers, and the CC2 `printer_dsp.cfg` `[por]` section for the CC2 pins.
+**This project is a derivative of [`power_loss` by jagonmo](https://gist.github.com/jagonmo/b14d6420d6d4af3de0ad6a0cdce5524c).** jagonmo did the hard part, and this README, the module and the installer all follow that design. In particular, these come from the original:
+
+- **The idea and the research.** Working out from Elegoo's official firmware that the Centauri Carbon can detect an outage and keep the board alive on a supercapacitor, and finding the GPIOs involved. That includes the decision never to touch the supercap-to-rail line (GPIO 203).
+- **The hardware test.** The real power-cut test on a CC1 running COSMOS, which found 5–15 seconds of hold-up.
+- **The module design.** The two saved position packages (`instant` at the outage and `checkpoint` at the last layer change), and the `POWER_LOSS_RESUME` and `POWER_LOSS_RESUME_SAFE` commands.
+- **The resume sequence.** Reheating the nozzle before moving, real X/Y homing instead of trusting a saved position, the Z correction for `[homing_override]`, and the tray purge and wipe.
+- **Filesystem protection.** Syncing and remounting read-only instead of shutting down, because a full shutdown can leave the board needing a physical replug.
+- **Hard-won findings.** Requesting GPIO edge events before exporting the pin through sysfs, because the kernel gives a line only one owner. Resending the resume prompt a few times after boot because the UI may not be connected yet.
+- **The names.** The module name, the command names and the config option names.
+
+**What this version adds:** `printer_model` profiles for CC1, CC2 and custom boards, with the CC2 pins taken from Elegoo's config. It also adds a configurable rail-pin guard, outage debounce, an atomic state save, saving only while a print is running, a configurable tray macro, a pin re-read after the debounce, and the GitHub installer.
+
+Thank you, jagonmo.
+
+### Other sources
+
+The original credits these, and so does this project:
+
+- **Elegoo's official firmware** (`por.cpp`, `virtual_sdcard.cpp`, `break_save.cpp`, `gpio.h`), GPL-3.0, for the detection mechanism, saved-state fields and CC1 GPIO pin numbers. The CC2 `printer_dsp.cfg` `[por]` section supplied the CC2 pins.
 - **[KlipperPLR](https://github.com/bigtreetech/KlipperPLR)** (BigTreeTech, forked from Yumi-Lab/Yumi_PLR) for deriving extrude mode and the last `E` value by replaying the G-code file.
 - **[docs.opencentauri.cc](https://docs.opencentauri.cc)** for hardware and architecture documentation.
-- The original community implementation of Power Loss Recovery for the Centauri Carbon, which this module follows in structure and behavior.
+- **[OpenCentauri/cosmos issue 348](https://github.com/OpenCentauri/cosmos/issues/348)**, where the CC1 and CC2 pin table was posted.
 
-Because the design derives from GPL-3.0 sources, distribute this module under the **GPL-3.0** license for consistency.
+### License
+
+The original states that, because its design is based on Elegoo's GPL-3.0 files, any distribution should carry the same license. This version follows that and is distributed under the **GPL-3.0**. Please keep the attribution notices in the source files if you redistribute it.
