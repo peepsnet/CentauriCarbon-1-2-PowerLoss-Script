@@ -5,15 +5,22 @@
 # supercapacitor hold-up time, protects the filesystems, and offers a
 # guided resume on the next boot.
 #
-# Pins (Centauri Carbon 1 mainboard):
-#   PG0  -> Linux GPIO 192  outage detect (input)
-#   PC1  -> Linux GPIO 65   supercap charge enable (output)
-#   PG11 -> Linux GPIO 203  supercap output to rail -- DELIBERATELY NOT USED
+# Supported models (printer_model):
+#   cc1    Centauri Carbon 1 -- known pins, used as defaults:
+#            PG0  -> Linux GPIO 192  outage detect (input)
+#            PC1  -> Linux GPIO 65   supercap charge enable (output)
+#            PG11 -> Linux GPIO 203  supercap output to rail -- NEVER USED
+#   cc2    Centauri Carbon 2 -- pins NOT verified. sensor_gpio and
+#          charge_gpio must be set explicitly, and rail_gpio should be set
+#          to the supercap-output-to-rail line so it is guarded.
+#   custom Same rules as cc2 for any other board.
 #
-# printer.cfg:
+# printer.cfg (CC1; the pins shown are the CC1 defaults):
 #   [power_loss]
+#   printer_model: cc1
 #   sensor_gpio: 192
 #   charge_gpio: 65
+#   #rail_gpio: 203             # line that must never be touched
 #   poll_interval: 0.01
 #   debounce_time: 0.05        # outage must persist this long to count
 #   charge_time: 30
@@ -23,7 +30,9 @@
 #   homing_override_z_lift: 5.0   # must match "G0 Z<N>" in [homing_override]
 #   purge_mm: 15.0
 #   move_temp: 200.0
-#   wipe: True                 # run the tray wipe pattern before resuming
+#   wipe: True                 # run the tray wipe pattern (CC1 coordinates)
+#   tray_macro: MOVE_TO_TRAY   # macro that parks at the purge tray; blank
+#                              # skips it
 #   #invert_sensor: False
 #
 # Commands:
@@ -67,6 +76,32 @@ _GET_LINE_VALUES_IOCTL = _ioc(_IOC_READ | _IOC_WRITE, 0xB4, 0x08,
                               _HANDLE_DATA_SIZE)
 
 
+# Per-model defaults. None means "unknown: the user must set it".
+MODEL_PROFILES = {
+    "cc1": {
+        "sensor_gpio": 192,
+        "charge_gpio": 65,
+        "rail_gpio": 203,
+        "tray_macro": "MOVE_TO_TRAY",
+        "wipe": True,
+    },
+    "cc2": {
+        "sensor_gpio": None,
+        "charge_gpio": None,
+        "rail_gpio": None,
+        "tray_macro": "",
+        "wipe": False,
+    },
+    "custom": {
+        "sensor_gpio": None,
+        "charge_gpio": None,
+        "rail_gpio": None,
+        "tray_macro": "",
+        "wipe": False,
+    },
+}
+
+
 class SysfsGpio:
     """Minimal sysfs GPIO. Klipper's pin system only covers MCU pins;
     these live on the host SoC."""
@@ -101,8 +136,45 @@ class PowerLoss:
         self.reactor = self.printer.get_reactor()
         self.gcode = self.printer.lookup_object("gcode")
 
-        self.sensor_line = config.getint("sensor_gpio", 192)
-        self.charge_line = config.getint("charge_gpio", 65)
+        self.model = config.getchoice(
+            "printer_model", {m: m for m in MODEL_PROFILES}, "cc1")
+        profile = MODEL_PROFILES[self.model]
+
+        sensor = config.getint("sensor_gpio", profile["sensor_gpio"],
+                               minval=0)
+        charge = config.getint("charge_gpio", profile["charge_gpio"],
+                               minval=0)
+        rail = config.getint("rail_gpio", profile["rail_gpio"], minval=0)
+        if sensor is None or charge is None:
+            raise config.error(
+                "power_loss: printer_model '%s' has no verified default "
+                "GPIOs. Set sensor_gpio and charge_gpio explicitly (and "
+                "rail_gpio, the supercap-output-to-rail line, so it is "
+                "guarded). Wrong pins on a power rail can damage the "
+                "board." % self.model)
+        if rail is None:
+            logging.warning("power_loss: rail_gpio not set; no GPIO is "
+                            "guarded against accidental use")
+        if sensor == charge:
+            raise config.error("power_loss: sensor_gpio and charge_gpio "
+                               "must differ")
+        # Safety guard: never allow the rail-output pin to be used.
+        if rail is not None and rail in (sensor, charge):
+            raise config.error(
+                "power_loss: GPIO %d is the supercap rail output and "
+                "must not be used as the sensor or charge pin" % rail)
+        self.sensor_line = sensor
+        self.charge_line = charge
+        self.rail_line = rail
+
+        self.tray_macro = config.get("tray_macro",
+                                     profile["tray_macro"]).strip()
+        self.do_wipe = config.getboolean("wipe", profile["wipe"])
+        if self.do_wipe and self.model != "cc1":
+            raise config.error(
+                "power_loss: the built-in wipe pattern uses CC1 "
+                "coordinates and is only allowed with printer_model: cc1. "
+                "Use tray_macro to run your own sequence instead.")
         self.poll_interval = config.getfloat("poll_interval", 0.01, above=0.)
         self.debounce_time = config.getfloat("debounce_time", 0.05, minval=0.)
         self.charge_time = config.getfloat("charge_time", 30., minval=0.)
@@ -113,13 +185,7 @@ class PowerLoss:
             "homing_override_z_lift", 5.)
         self.purge_mm = config.getfloat("purge_mm", 15., minval=0.)
         self.move_temp = config.getfloat("move_temp", 200., minval=0.)
-        self.do_wipe = config.getboolean("wipe", True)
         self.save_path = config.get("save_path", "/data/power_loss_state.json")
-
-        # Safety guard: never allow the supercap-output pin to be used.
-        if 203 in (self.sensor_line, self.charge_line):
-            raise config.error("power_loss: GPIO 203 (supercap output) "
-                               "must not be used by this module")
 
         self.charge_pin = SysfsGpio(self.charge_line)
         self.charge_pin.set_direction("out")
@@ -573,12 +639,17 @@ class PowerLoss:
             self._run("M190 S%.1f" % bed_t)
         if ext_t:
             self._run("M109 S%.1f" % ext_t)
-        gcmd.respond_info("power_loss: purging at the tray...")
-        self._run("MOVE_TO_TRAY")
-        self._run("M83")
-        self._run("G1 E%.1f F300" % self.purge_mm)
-        self._run("M400")
-        if self.do_wipe:
+        if self.tray_macro:
+            gcmd.respond_info("power_loss: purging at the tray...")
+            self._run(self.tray_macro)
+            self._run("M83")
+            self._run("G1 E%.1f F300" % self.purge_mm)
+            self._run("M400")
+        else:
+            # Never purge in place: the nozzle is over the part/bed.
+            gcmd.respond_info("power_loss: no tray_macro set, skipping "
+                              "purge and wipe")
+        if self.tray_macro and self.do_wipe:
             lines = ["G1 F9000"]
             for _ in range(4):
                 for i in range(8):
@@ -626,9 +697,10 @@ class PowerLoss:
     # ------------------------------------------------------------------
     def cmd_STATUS(self, gcmd):
         gcmd.respond_info(
-            "sensor=GPIO%d charge=GPIO%d charge_done=%s saved=%s "
-            "pending_resume=%s detection=%s"
-            % (self.sensor_line, self.charge_line, self.charge_done,
+            "model=%s sensor=GPIO%d charge=GPIO%d rail_guard=%s "
+            "charge_done=%s saved=%s pending_resume=%s detection=%s"
+            % (self.model, self.sensor_line, self.charge_line,
+               self.rail_line, self.charge_done,
                self.saved_already, os.path.exists(self.save_path),
                self.detection_method))
 
