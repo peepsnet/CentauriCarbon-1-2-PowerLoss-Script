@@ -348,6 +348,7 @@ fi
 say ""
 say "Next steps:"
 say "  1. Restart Klipper when NO print is running (the installer never does this for you)."
+say "      You can just type "reboot" here now to reboot. "
 say "  2. Run POWER_LOSS_STATUS in the console; after ~30 s it should show charge_done=True."
 if [ "$MODEL" = cc2 ]; then
     say "  3. CC2: verify the sensor with POWER_LOSS_TEST_READ N=100 before trusting a save."
