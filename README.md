@@ -1,11 +1,11 @@
 # power_loss — Power Loss Recovery for Elegoo Centauri Carbon (COSMOS)
-This is copy of: https://gist.github.com/jagonmo/b14d6420d6d4af3de0ad6a0cdce5524c
-I am working on this working for both the CC1 and CC2. 
-
-> [!WARNING]
-> This only works for the CC1 right now. 
 
 A Klipper extras module that detects a real mains power outage using the Centauri Carbon's hardware supercapacitor, saves the state of the print in progress, and lets you resume it once power returns.
+
+| Model                    | Status                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------ |
+| Centauri Carbon 1 (CC1)  | Built-in defaults (`printer_model: cc1`).                                                        |
+| Centauri Carbon 2 (CC2)  | **Pins unverified.** You must supply the GPIOs yourself (`printer_model: cc2`). See [Centauri Carbon 2](#centauri-carbon-2). |
 
 > [!WARNING]
 > This module is experimental and has not been validated across printers or hardware revisions. Test it with a print you don't care about before relying on it. See [Known limitations](#known-limitations).
@@ -14,6 +14,7 @@ A Klipper extras module that detects a real mains power outage using the Centaur
 
 - [How it works](#how-it-works)
 - [Hardware](#hardware)
+- [Centauri Carbon 2](#centauri-carbon-2)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Commands](#commands)
@@ -49,18 +50,49 @@ flowchart TD
 
 ## Hardware
 
-Pins on the Centauri Carbon 1 mainboard:
+Pins on the **Centauri Carbon 1** mainboard (the `cc1` defaults):
 
-| Function                       | CC1 SoC port | CC1 Linux GPIO | CC2 Soc port | CC2 Linux GPIO |Used by this module |
-| ------------------------------ | ------------ | -------------- | ------------ | -------------- | ------------------- |
-| Outage detection               | PG0          | 192            | PG9          |                | Input (read)        |
-| Supercap charge enable         | PC1          | 65             | PD20         |                | Output (control)    |
-| Supercap output to power rail  | PG11         | 203            | PG11         |                | **Never used**      |
+| Function                       | SoC port | Linux GPIO | Used by this module |
+| ------------------------------ | -------- | ---------- | ------------------- |
+| Outage detection               | PG0      | 192        | Input (read)        |
+| Supercap charge enable         | PC1      | 65         | Output (control)    |
+| Supercap output to power rail  | PG11     | 203        | **Never used**      |
 
 > [!IMPORTANT]
-> GPIO 203 enables the supercap's output to the power rail. The module refuses to start if it is configured as either the sensor or charge pin. Don't change that without checking with a multimeter what is on the other side.
+> The "supercap output to rail" line connects the supercap to the power rail. The module refuses to start if the configured `rail_gpio` is also used as the sensor or charge pin. On CC1 that is GPIO 203 and is guarded by default. Don't remove that guard without checking with a multimeter what is on the other side.
 
-Reported behavior from a real outage test: with the supercap charged, the SoC stayed alive for roughly 5–15 seconds. Whether motors and heaters keep any residual power is **unconfirmed**, so the module assumes they don't and only moves the toolhead on resume.
+Reported behavior from a real outage test on a CC1: with the supercap charged, the SoC stayed alive for roughly 5–15 seconds. Whether motors and heaters keep any residual power is **unconfirmed**, so the module assumes they don't and only moves the toolhead on resume.
+
+## Centauri Carbon 2
+
+The CC2 uses a different mainboard from the CC1, so the CC1 pin numbers **must not** be reused on it. I could not find confirmed CC2 GPIO numbers for outage detection or supercap control, and I could not confirm that the CC2 runs COSMOS/Klipper at all. This module needs a Klipper host with sysfs GPIO access, so check that first.
+
+With `printer_model: cc2` the module has no pin defaults and refuses to start until you set them:
+
+```ini
+[power_loss]
+printer_model: cc2
+sensor_gpio: <outage detect GPIO>
+charge_gpio: <supercap charge enable GPIO>
+rail_gpio: <supercap output-to-rail GPIO>   # guarded, never driven
+```
+
+Differences from `cc1`:
+
+- **No default pins.** `sensor_gpio` and `charge_gpio` are required, and `rail_gpio` should be set so the rail line is guarded.
+- **No tray macro or wipe by default.** `tray_macro` is blank and the built-in wipe pattern is disabled. The wipe uses CC1 coordinates, so it is rejected for any model other than `cc1`. If `tray_macro` is blank, the resume skips the purge entirely rather than purging over the part. Point `tray_macro` at your own parking macro if you want a purge.
+- **Re-check `homing_override_z_lift`.** It must match the Z lift in your CC2's `[homing_override]`.
+
+### Finding the pins safely
+
+Only identify pins by observing them. Don't drive an unknown GPIO as an output.
+
+1. Look for the pin assignments in the stock firmware, the OpenCentauri docs, or the OpenCentauri community.
+2. List the kernel's view of the lines with `cat /sys/kernel/debug/gpio` (if debugfs is mounted).
+3. Confirm the outage sensor by reading it as an input only. Export the line, set `direction` to `in`, and compare `value` with mains on and off.
+4. Do not experiment with the charge or rail lines on a live board. If you aren't certain, don't use the module.
+
+If you find verified CC2 pins, please open an issue or PR so they can become the `cc2` defaults.
 
 ## Installation
 
@@ -116,13 +148,14 @@ After about 30 seconds it should report `charge_done=True` and show which `detec
 
 ## Configuration
 
-Every option has a default. Only declare the ones you want to change.
+Every option has a default on `cc1`. On `cc2` or `custom` the GPIO options have no default and must be set. Only declare the options you want to change.
 
-###CC1
 ```ini
 [power_loss]
+printer_model: cc1
 sensor_gpio: 192
 charge_gpio: 65
+rail_gpio: 203
 poll_interval: 0.01
 debounce_time: 0.05
 charge_time: 30
@@ -132,33 +165,17 @@ travel_speed: 3000
 homing_override_z_lift: 5.0
 purge_mm: 15.0
 move_temp: 200.0
+tray_macro: MOVE_TO_TRAY
 wipe: True
 #invert_sensor: False
 ```
-
-###CC2
-```ini
-[power_loss]
-sensor_gpio: 192
-charge_gpio: 65
-poll_interval: 0.01
-debounce_time: 0.05
-charge_time: 30
-save_path: /data/power_loss_state.json
-z_hop: 10.0
-travel_speed: 3000
-homing_override_z_lift: 5.0
-purge_mm: 15.0
-move_temp: 200.0
-wipe: True
-#invert_sensor: False
-```
-
 
 | Option                   | Default                          | Description                                                                                  |
 | ------------------------ | -------------------------------- | -------------------------------------------------------------------------------------------- |
-| `sensor_gpio`            | `192`                            | Linux GPIO for outage detection.                                                             |
-| `charge_gpio`            | `65`                             | Linux GPIO that enables supercap charging.                                                   |
+| `printer_model`          | `cc1`                            | `cc1`, `cc2` or `custom`. Selects the defaults below. `cc2` and `custom` have no GPIO defaults. |
+| `sensor_gpio`            | `192` on `cc1`, required otherwise | Linux GPIO for outage detection.                                                           |
+| `charge_gpio`            | `65` on `cc1`, required otherwise  | Linux GPIO that enables supercap charging.                                                 |
+| `rail_gpio`              | `203` on `cc1`, none otherwise   | Supercap output-to-rail line. Never driven. Startup fails if it matches the sensor or charge pin. |
 | `poll_interval`          | `0.01`                           | Seconds between reads when using the polling fallback.                                       |
 | `debounce_time`          | `0.05`                           | Seconds an outage must persist before it counts. Filters electrical noise and flickers.      |
 | `charge_time`            | `30`                             | Seconds the supercap is assumed to need to charge. Reported by `POWER_LOSS_STATUS`.          |
@@ -168,7 +185,8 @@ wipe: True
 | `homing_override_z_lift`  | `5.0`                            | Must match the `G0 Z<N>` lift in your `[homing_override]` macro. See [limitations](#known-limitations). |
 | `purge_mm`               | `15.0`                           | Filament purged at the tray before resuming, to clear ooze.                                  |
 | `move_temp`              | `200.0`                          | Nozzle temperature to reach before any movement. The full target keeps heating in the background. |
-| `wipe`                   | `True`                           | Run the tray wipe pattern after purging.                                                     |
+| `tray_macro`             | `MOVE_TO_TRAY` on `cc1`, blank otherwise | Macro that parks the toolhead at the purge tray. If blank, the purge and wipe are skipped. |
+| `wipe`                   | `True` on `cc1`, `False` otherwise | Run the built-in tray wipe pattern (CC1 coordinates). Rejected on any model other than `cc1`. |
 | `invert_sensor`          | `False`                          | Set to `True` if the sensor polarity turns out to be inverted.                               |
 
 ## Commands
@@ -205,7 +223,7 @@ When you choose a resume option, the module does the following:
 2. **Marks Z** at the saved height and hops up by `z_hop`.
 3. **Homes X/Y** with a real `G28 X Y`. This avoids trusting a saved XY position that may be off by several mm due to motion lookahead.
 4. **Corrects Z** for the `[homing_override]` lift: it re-declares Z as `saved_z + z_hop + homing_override_z_lift`.
-5. **Waits for full temperatures**, then runs `MOVE_TO_TRAY`, purges `purge_mm` of filament and runs the wipe pattern.
+5. **Waits for full temperatures**, then runs `tray_macro` (default `MOVE_TO_TRAY` on `cc1`), purges `purge_mm` of filament and runs the wipe pattern. If no `tray_macro` is set, this step is skipped entirely.
 6. **Travels** to the saved X/Y while still elevated, then lowers to the saved Z.
 7. **Restores extruder state** by replaying the G-code file up to the resume offset to find the extrude mode (`M82`/`M83`) and last `E` value. It does not trust Klipper's live state. Fan and speed factor are also restored.
 8. **Reloads the file** with `M23`, `M26` and `M24`, and deletes the state file.
@@ -215,12 +233,12 @@ The state file contains two position packages: `instant` (captured at the outage
 ## Known limitations
 
 - **`homing_override_z_lift` is printer-specific.** The Z correction assumes a real `G0 Z<N>` inside your `[homing_override]` macro. If you change that macro, this value becomes silently wrong.
-- **The wipe pattern and `MOVE_TO_TRAY` are Centauri Carbon specific.** The wipe coordinates are hardcoded. Set `wipe: False` to skip the wipe.
+- **The wipe pattern and `MOVE_TO_TRAY` are CC1 specific.** The wipe coordinates are hardcoded, so the module only allows `wipe: True` with `printer_model: cc1`. Set `wipe: False` to skip it, or use `tray_macro` for your own sequence.
 - **Motor and heater power during an outage is unconfirmed.** The module assumes there is none and doesn't attempt an emergency retract or Z hop at outage time.
 - **A brief outage still runs the full flow.** Debounce filters noise and sub-`debounce_time` flickers, but any outage longer than that triggers the save and filesystem protection even if power returns a moment later.
 - **The resume leaves a visible seam** where the print continues. This is inherent to this kind of recovery.
 - **The debounce re-read ioctl is unverified** on this kernel. If it fails, the module saves on the edge alone.
-- **Tested hardware is limited.** It targets the Centauri Carbon 1 running COSMOS only.
+- **CC2 support is untested.** The module has no verified CC2 pin numbers and I couldn't confirm that the CC2 runs COSMOS/Klipper. Only the CC1 defaults come from known hardware, and even those have only had limited testing.
 
 ## Troubleshooting
 
@@ -229,6 +247,7 @@ The state file contains two position packages: `instant` (captured at the outage
 | `Unknown command: POWER_LOSS_STATUS`      | The overlay isn't mounted or Klipper wasn't restarted. Run `ls /usr/share/klipper/klippy/extras/power_loss.py`. |
 | `detection=polling`                       | The ioctl tier failed. Check `klippy.log` for the reason, for example `EBUSY` if something else owns GPIO 192. |
 | Resume prompt never appears               | The prompt is retried for about 20 seconds after boot. Run `POWER_LOSS_RESUME_SAFE` manually.            |
+| Startup error: `no verified default GPIOs` | You set `printer_model: cc2` or `custom` without `sensor_gpio` and `charge_gpio`. Set them explicitly. |
 | Z height wrong after resume               | Verify `homing_override_z_lift` against your `[homing_override]` macro. The console prints the declared Z. |
 | Save never triggers                       | Try `invert_sensor: True`, and watch readings with `POWER_LOSS_TEST_READ N=100`.                         |
 | State file not written                    | Confirm `save_path` is on a writable partition.                                                          |
