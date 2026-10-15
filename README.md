@@ -114,22 +114,20 @@ COSMOS's root filesystem is read-only, so the module is installed through an ove
 
 ### One-line install
 
-Replace `OWNER/REPO` with this repository, and pin a tag or commit instead of `main` if you can:
+To pin a specific release, replace `main` with a tag or commit:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh
 ```
 
 To pass options, use `sh -s --`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sh -s -- --model cc2
+curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc2
 ```
 
 > [!NOTE]
 > Piping a script into `sh` runs whatever is at that URL. If you'd rather read it first, download `install.sh`, open it, then run `sh install.sh`. The installer only needs `curl` or `wget`.
-
-The script is meant to be edited once: set `POWER_LOSS_REPO=owner/name` in your environment, or replace the `YOUR_GITHUB_USER/YOUR_REPO` placeholder near the top of `install.sh` with your repository.
 
 ### What the installer does
 
@@ -159,15 +157,15 @@ It never restarts Klipper, because that would interrupt a print. Restart it your
 
 | Environment variable   | Description                                                      |
 | ---------------------- | ---------------------------------------------------------------- |
-| `POWER_LOSS_REPO`      | `owner/name` of the GitHub repository to download from.          |
+| `POWER_LOSS_REPO`      | `owner/name` of the repository to download from. Defaults to `peepsnet/CentauriCarbon-1-2-PowerLoss-Script`. |
 | `POWER_LOSS_REF`       | Branch, tag or commit to download. Defaults to `main`.           |
 | `POWER_LOSS_SHA256`    | Require this checksum for `power_loss.py`.                       |
 
 Non-interactive example (for example over SSH with no terminal), using a pinned tag and a checksum:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/v1.0.0/install.sh | \
-  POWER_LOSS_REPO=OWNER/REPO POWER_LOSS_REF=v1.0.0 POWER_LOSS_SHA256=<sha256> \
+curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/v1.0.0/install.sh | \
+  POWER_LOSS_REPO=peepsnet/CentauriCarbon-1-2-PowerLoss-Script POWER_LOSS_REF=v1.0.0 POWER_LOSS_SHA256=<sha256> \
   sh -s -- --model cc1 --printer-cfg /path/to/printer.cfg
 ```
 
