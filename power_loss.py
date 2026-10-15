@@ -10,10 +10,13 @@
 #            PG0  -> Linux GPIO 192  outage detect (input)
 #            PC1  -> Linux GPIO 65   supercap charge enable (output)
 #            PG11 -> Linux GPIO 203  supercap output to rail -- NEVER USED
-#   cc2    Centauri Carbon 2 -- pins NOT verified. sensor_gpio and
-#          charge_gpio must be set explicitly, and rail_gpio should be set
-#          to the supercap-output-to-rail line so it is guarded.
-#   custom Same rules as cc2 for any other board.
+#   cc2    Centauri Carbon 2 -- pins from Elegoo's printer_dsp.cfg,
+#          converted to Linux numbers, NOT yet confirmed on hardware:
+#            PG9  -> Linux GPIO 201  outage detect (input)
+#            PD20 -> Linux GPIO 116  supercap charge enable (output)
+#            PG11 -> Linux GPIO 203  supercap output to rail -- NEVER USED
+#   custom Any other board: sensor_gpio and charge_gpio must be set
+#          explicitly, and rail_gpio should be set so it is guarded.
 #
 # printer.cfg (CC1; the pins shown are the CC1 defaults):
 #   [power_loss]
@@ -85,10 +88,14 @@ MODEL_PROFILES = {
         "tray_macro": "MOVE_TO_TRAY",
         "wipe": True,
     },
+    # CC2: taken from Elegoo's printer_dsp.cfg [por] section
+    # (sensor_pin=host:PG9, charge_pin=host:PD20, ctrl_pin=host:PG11) and
+    # converted with the Allwinner rule 32*(port letter index)+pin, which
+    # reproduces the CC1 numbers. Not yet confirmed on a running CC2.
     "cc2": {
-        "sensor_gpio": None,
-        "charge_gpio": None,
-        "rail_gpio": None,
+        "sensor_gpio": 201,    # PG9
+        "charge_gpio": 116,    # PD20
+        "rail_gpio": 203,      # PG11
         "tray_macro": "",
         "wipe": False,
     },
@@ -152,6 +159,13 @@ class PowerLoss:
                 "rail_gpio, the supercap-output-to-rail line, so it is "
                 "guarded). Wrong pins on a power rail can damage the "
                 "board." % self.model)
+        if self.model == "cc2":
+            logging.warning(
+                "power_loss: cc2 GPIOs (sensor=%d charge=%d rail=%d) are "
+                "derived from Elegoo's config and not yet confirmed on "
+                "hardware. Verify the sensor polarity with "
+                "POWER_LOSS_TEST_READ before trusting a save.",
+                sensor, charge, rail)
         if rail is None:
             logging.warning("power_loss: rail_gpio not set; no GPIO is "
                             "guarded against accidental use")
