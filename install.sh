@@ -32,7 +32,7 @@
 
 set -eu
 
-REPO="${POWER_LOSS_REPO:-YOUR_GITHUB_USER/YOUR_REPO}"
+REPO="${POWER_LOSS_REPO:-peepsnet/CentauriCarbon-1-2-PowerLoss-Script}"
 REF="${POWER_LOSS_REF:-main}"
 RAW_BASE="${POWER_LOSS_RAW_BASE:-https://raw.githubusercontent.com/$REPO/$REF}"
 EXPECTED_SHA256="${POWER_LOSS_SHA256:-}"
