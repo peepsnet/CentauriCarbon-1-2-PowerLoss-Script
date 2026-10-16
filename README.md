@@ -193,8 +193,8 @@ If SSH says `Permission denied`, the password is wrong or the login has changed 
 
 Follow the section for your printer:
 
-- [Centauri Carbon 1](#installing-on-the-centauri-carbon-1): COSMOS is installed with the standard OpenCentauri method.
-- [Centauri Carbon 2 (alpha)](#installing-on-the-centauri-carbon-2-alpha): COSMOS for the CC2 is in alpha testing, so the install is different and riskier.
+- [Auto installing on the Centauri Carbon 1](#auto-installing-on-the-centauri-carbon-1): COSMOS is installed with the standard OpenCentauri method.
+- [Auto installing on the Centauri Carbon 2](#auto-installing-on-the-centauri-carbon-2): COSMOS for the CC2 is in alpha testing, so the install is different and riskier.
 
 Both sections end with the same two shared steps, described after them: [running the installer](#running-the-installer) and [adding the config](#add-the-config-and-restart-klipper).
 
