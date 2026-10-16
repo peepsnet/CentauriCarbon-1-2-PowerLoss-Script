@@ -36,9 +36,9 @@ This project provides a custom Klipper power_loss module and installer that dete
     - [Auto installing on the Centauri Carbon 2](#auto-installing-on-the-centauri-carbon-2)
     - General Installer Operations
     - Options
-    - Manual install
-    - Add the config and restart Klipper
-    - Uninstall
+    - [Manual install](#anual-install)
+    - [Add the config and restart Klipper](#add-the-config-and-restart-klipper)
+    - [Uninstall](#uninstall)
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [Detection methods](#detection-methods)
@@ -342,6 +342,37 @@ fi
 
 Add the `[power_loss]` section the installer printed (see [Configuration](#configuration) for every option) to `printer.cfg`. The COSMOS docs say `printer.cfg` is the user-facing config and can be edited in the web interface, so the easiest way is to paste the section there. Don't put it in `klipper-readonly/*.cfg`: COSMOS resets those files on every firmware update (see [COSMOS: Features](https://docs.opencentauri.cc/klipper-conversion/cosmos/features/)).
 
+<table>
+    <tr><th>CC1 Minimal Config</th><th>&nbsp;&nbsp;</th><th>CC2 Minimal Config</th></tr>
+    <tr>
+        <td>
+```ini
+[power_loss]
+printer_model: cc2
+save_path: /data/power_loss_state.json
+# Must match the Z lift in your [homing_override]:
+homing_override_z_lift: 5.0
+# CC2: check polarity with POWER_LOSS_TEST_READ N=100 (mains on).
+# If every reading is 1, uncomment:
+#invert_sensor: True
+```
+        </td>
+        <td>&nbsp;&nbsp;</td>
+        <td>
+```ini
+[power_loss]
+printer_model: cc2
+save_path: /data/power_loss_state.json
+# Must match the Z lift in your [homing_override]:
+homing_override_z_lift: 5.0
+# CC2: check polarity with POWER_LOSS_TEST_READ N=100 (mains on).
+# If every reading is 1, uncomment:
+#invert_sensor: True
+```
+        </td>
+    </tr>
+</table>
+
 Then restart Klipper while no print is running, by running this in the web interface's console:
 
 ```
@@ -367,7 +398,7 @@ Every option has a default on `cc1`. `cc2` has pin defaults from Elegoo's config
 
 | Option                   | Default                          | Description                                                                                  |
 | ------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `printer_model`          | `cc1`, `cc2` or `custom`      | `cc1`, `cc2` or `custom`. Selects the defaults below. `custom` has no GPIO defaults. |
+| `printer_model`          | `cc1`                         | `cc1`, `cc2` or `custom`. Selects the defaults below. `custom` has no GPIO defaults. |
 | `sensor_gpio`            | `192` on `cc1`, `201` on `cc2`, required on `custom` | Linux GPIO for outage detection.                                                           |
 | `charge_gpio`            | `65` on `cc1`, `116` on `cc2`, required on `custom` | Linux GPIO that enables supercap charging.                                                 |
 | `rail_gpio`              | `203` on `cc1` and `cc2`, none on `custom` | Supercap output-to-rail line. Never driven. Startup fails if it matches the sensor or charge pin. |
