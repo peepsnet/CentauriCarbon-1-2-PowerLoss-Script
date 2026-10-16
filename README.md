@@ -34,6 +34,7 @@ This project provides a custom Klipper power_loss module and installer that dete
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [Detection methods](#detection-methods)
+- [Usage](#usage).
 - [Resume sequence](#resume-sequence)
 - [Known limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
@@ -439,6 +440,74 @@ The module tries these in order and falls back if one fails:
 > A GPIO line has one exclusive owner in the kernel. The module requests the edge events *before* touching sysfs for this reason. If you export GPIO 192 manually while Klipper is running, the ioctl tier will fail with `EBUSY` and the module will fall back to polling.
 
 In edge mode, the pin level is re-read after `debounce_time` to confirm the outage. If that read fails, the module trusts the edge and saves anyway, so it errs toward saving.
+
+## Usage
+
+### Resume Precise vs. Resume Safe
+
+The power-loss recovery script offers two recovery modes: **Resume Precise** and **Resume Safe**. Both allow you to continue an interrupted print, but they differ in which saved checkpoint they use to determine where printing should resume.
+
+#### 1. Resume Precise
+
+**Purpose:** Resume as close as possible to the exact point where power was lost.
+
+Resume Precise uses the position and G-code file offset saved when the power outage was detected.
+
+**Advantages**
+- Minimizes the amount of material that may need to be printed again.
+- Attempts to continue as close as possible to the interruption point.
+- Can reduce the size of the visible transition between the original print and the resumed print.
+
+**Risks and limitations**
+- The saved position may not perfectly match the actual toolhead position when power is lost.
+- Motion lookahead, movements in progress, or extrusion state may affect the accuracy of recovery.
+- An inaccurate restart can cause excess material, a visible seam, or, in the worst case, a collision.
+
+**Best suited for:** Situations where minimizing repeated printing is a priority and you are comfortable with the potential recovery risks.
+
+#### 2. Resume Safe
+
+**Purpose:** Resume from a more conservative checkpoint to reduce the risk of restarting in the middle of a movement or extrusion operation.
+
+Resume Safe uses the saved checkpoint associated with the last completed layer change rather than the exact point where the outage occurred.
+
+**Advantages**
+- Reduces the risk of resuming from an inconsistent toolhead or extrusion state.
+- Avoids relying entirely on the checkpoint captured at the instant of the outage.
+- Is the recommended starting choice for most recovery situations.
+
+**Trade-offs and limitations**
+- Some previously printed material may be printed again.
+- Reprinting part of a layer can create a thicker area or a visible seam.
+- Recovery is not guaranteed if the part moves, cools, or loses adhesion during the outage.
+
+**Best suited for:** Most users who prioritize a more conservative recovery over minimizing repeated printing.
+
+#### Comparison
+
+| Behavior | Resume Precise | Resume Safe |
+|---|---|---|
+| Recovery checkpoint | Position saved at outage detection | Last layer-change checkpoint |
+| Amount of material repeated | Typically less | May repeat part of a layer |
+| Recovery approach | More exact | More conservative |
+| Potential visible seam | Possible | Possible |
+| Recommended starting choice | Situational | **Yes** |
+
+#### Which Mode Should I Use?
+
+For most users, **Resume Safe is the recommended starting choice** because it favors a more conservative restart position.
+
+Resume Precise may be preferable when minimizing repeated material is more important, provided you understand the potential risks.
+
+If the outage occurs before the first layer change, the script automatically falls back to the precise checkpoint.
+
+> [!IMPORTANT]
+> Neither recovery mode guarantees a perfect print. The printer may lose physical position, the part may shift or cool, and the resumed print may have a visible transition line. Always test power-loss recovery with an inexpensive, noncritical print before relying on it for a valuable or lengthy print.
+
+> [!WARNING]
+> Centauri Carbon 2 (CC2) compatibility and recovery behavior may depend on the firmware version, GPIO configuration, and printer hardware. Verify the complete recovery process on your own printer before relying on it.
+
+
 
 ## Resume sequence
 
