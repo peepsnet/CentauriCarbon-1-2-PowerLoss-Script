@@ -196,10 +196,9 @@ COSMOS on the CC1 is installed with the OpenCentauri installer, as described on 
 
 **You need:** a CC1 running COSMOS, the printer on your network (and its IP address), an SSH client, and no print running.
 
-1. **Install COSMOS Firmware.** Follow the official [COSMOS install guide](https://docs.opencentauri.cc/klipper-conversion/cosmos/install/). 
+1. **Install COSMOS Firmware.** Follow the official [CC1 COSMOS install guide](https://docs.opencentauri.cc/klipper-conversion/cosmos/install/). 
 2. **Connect over SSH** as `root` with the password `OpenCentauri`. See [Connecting over SSH](#connecting-over-ssh).
 3. **Run the installer** from the SSH session. See [Running the installer](#running-the-installer):
-
     ```sh
    curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh
    ```
@@ -207,22 +206,22 @@ COSMOS on the CC1 is installed with the OpenCentauri installer, as described on 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc
    ```
-
-5. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc1` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
+4. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc1` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
 
 ### Installing on the Centauri Carbon 2 (alpha)
 
-    > [!CAUTION]
-    > COSMOS for the CC2 is an early **technical preview in alpha testing** at the time of writing.
-    >This applies to the **CC2 and CC2C only**; the C2 and C2C aren't supported.
-    > To install COSMOS on your CC2 follow the steps in OpenCentauri's alpha announcement on their Discord: [announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488).
-    > That post is the source of truth and may have changed, so read it before you begin and report what you run into, good and bad.
-    > I used this method on my CC2.
+> [!IMPORTANT]
+> COSMOS for the CC2 is an early **technical preview in alpha testing** at the time of writing.
+>This applies to the **CC2 and CC2C only**; the C2 and C2C aren't supported.
+> To install COSMOS on your CC2 follow the steps in OpenCentauri's alpha announcement on their Discord: [announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488).
+> That post is the source of truth and may have changed, so read it before you begin and report what you run into, good and bad.
+> I used this method on my CC2.
 
 Once the printer is running the updated COSMOS Firmware, install this module:
 
-9. **Connect over SSH** again (user `root`, no password by default) and **run the installer**. See [Running the installer](#running-the-installer):
-
+1. **Install COSMOS Firmware.** Follow the official [CC2 COSMOS install guide](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488). 
+2. **Connect over SSH** as `root` with the password `OpenCentauri`. See [Connecting over SSH](#connecting-over-ssh).
+3. **Run the installer** from the SSH session. See [Running the installer](#running-the-installer):
    ```sh
    curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh
    ```
@@ -230,9 +229,7 @@ Once the printer is running the updated COSMOS Firmware, install this module:
    ```sh
    curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc2
    ```
-
-11. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc2` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
-12. **Verify the sensor** before trusting a save. The CC2 pin defaults are partly tested, so read the [Centauri Carbon 2](#centauri-carbon-2) section first.
+4. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc2` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
 
 ### Running the installer
 
