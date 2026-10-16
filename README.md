@@ -216,7 +216,7 @@ COSMOS on the CC1 is installed with the OpenCentauri installer, as described on 
    ```
 4. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc1` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
 
-### Auto installing on the Centauri Carbon 2 (alpha)
+### Auto installing on the Centauri Carbon 2
 
 > [!IMPORTANT]
 > COSMOS for the CC2 is an early **technical preview in alpha testing** at the time of writing.
