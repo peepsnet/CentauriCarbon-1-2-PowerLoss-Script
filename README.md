@@ -1,10 +1,21 @@
-# power_loss — Power Loss Recovery for Elegoo Centauri Carbon (COSMOS)
+# Elegoo Centauri Carbon Power-Loss Recovery for Klipper (CC1 & CC2)
 
-A Klipper extras module that detects a real mains power outage using the Centauri Carbon's hardware supercapacitor, saves the state of the print in progress, and lets you resume it once power returns.
+Power-loss recovery for the Elegoo Centauri Carbon 1 (CC1) and Centauri Carbon 2 (CC2) running COSMOS firmware and Klipper.
+
+This project provides a custom Klipper power_loss module and installer that detect a mains power outage, save the current print state when possible, and offer print recovery after power is restored.
+
+## Features
+- Power-loss detection: Monitors the printer's power-outage sensor using GPIO.
+- Print-state preservation: Saves relevant print information when a print is running or paused.
+- Recovery options: Provides options to resume a saved print or discard the saved state.
+- COSMOS integration: Installs the Klipper module using an overlay mount to accommodate the firmware's read-only filesystem.
+- Multiple printer profiles: Includes separate configuration defaults for the Centauri Carbon 1 and Centauri Carbon 2.
+- Installer and removal support: Includes an installer with model selection, configuration options, and an uninstall procedure.
 
 > [!IMPORTANT]
 > **Original author: [jagonmo](https://gist.github.com/jagonmo).** This project is a derivative of jagonmo's [`power_loss` module](https://gist.github.com/jagonmo/b14d6420d6d4af3de0ad6a0cdce5524c). jagonmo reverse engineered Elegoo's firmware, found the pins, designed the module, and proved it end to end with a real power cut on a Centauri Carbon 1. Nearly everything here builds on that work. See [Credits](#credits-and-license) for details.
 
+## Compatibility
 | Model                    | Status                                                                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------ |
 | Centauri Carbon 1 (CC1)  | Built-in defaults (`printer_model: cc1`).                                                        |
