@@ -31,18 +31,18 @@ This project provides a custom Klipper power_loss module and installer that dete
 - [Centauri Carbon 1](#centauri-carbon-1)
 - [Centauri Carbon 2](#centauri-carbon-2)
 - [Installation](#installation)
-    - [Connecting over SSH](#connecting-over-ssh).
+    - [Connecting over SSH](#connecting-over-ssh)
     - [Auto installing on the Centauri Carbon 1](#auto-installing-on-the-centauri-carbon-1)
     - [Auto installing on the Centauri Carbon 2](#auto-installing-on-the-centauri-carbon-2)
-    - General Installer Operations
-    - Options
-    - [Manual install](#anual-install)
+    - [Running the installer](#running-the-installer)
+    - [Options](#options)
+    - [Manual install](#manual-install)
     - [Add the config and restart Klipper](#add-the-config-and-restart-klipper)
     - [Uninstall](#uninstall)
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [Detection methods](#detection-methods)
-- [Usage](#usage).
+- [Usage](#usage)
 - [Resume sequence](#resume-sequence)
 - [Known limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
@@ -98,7 +98,7 @@ jagonmo reported this from a real outage test on a CC1 with mains fully unplugge
 printer_model: cc1
 sensor_gpio: 192      # PG0
 charge_gpio: 65       # PC1
-rail_gpio: 203        # PG11, guarded and never drive
+rail_gpio: 203        # PG11, guarded and never driven
 ```
 > [!IMPORTANT]
 >These settings need to be added to the `printer.cfg` through the Web Interface. 
@@ -149,7 +149,7 @@ rail_gpio: 203        # PG11, guarded and never driven
 
 ### Hardware test results
 
-One tester ran this on a CC2 (alpha COSMOS, installed as described in [Installing on the Centauri Carbon 2](#installing-on-the-centauri-carbon-2-alpha)) with the default `cc2` profile:
+One tester ran this on a CC2 (alpha COSMOS, installed as described in [Auto installing on the Centauri Carbon 2](#auto-installing-on-the-centauri-carbon-2)) with the default `cc2` profile:
 
 - `POWER_LOSS_STATUS` reported `model=cc2 sensor=GPIO201 charge=GPIO116 rail_guard=203`, and `charge_done` became `True` after about 30 seconds. Detection ran in `polling` mode.
 - With mains on, `POWER_LOSS_TEST_READ N=100` returned 100 zeros, so the default polarity (1 means outage) is right and `invert_sensor` isn't needed.
@@ -220,12 +220,12 @@ COSMOS on the CC1 is installed with the OpenCentauri installer, as described on 
 
 > [!IMPORTANT]
 > COSMOS for the CC2 is an early **technical preview in alpha testing** at the time of writing.
->This applies to the **CC2 and CC2C only**; the C2 and C2C aren't supported.
+> This applies to the **CC2 and CC2C only**; the C2 and C2C aren't supported.
 > To install COSMOS on your CC2 follow the steps in OpenCentauri's alpha announcement on their Discord: [announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488).
 > That post is the source of truth and may have changed, so read it before you begin and report what you run into, good and bad.
 > I used this method on my CC2.
 
-Once the printer is running the updated COSMOS Firmware, install this module:
+Install this module:
 
 1. **Install COSMOS Firmware.** Follow the official [CC2 COSMOS install guide](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488). 
 2. **Connect over SSH** as `root` and leave the password blank. See [Connecting over SSH](#connecting-over-ssh).
@@ -384,7 +384,7 @@ After about 30 seconds it should report `charge_done=True` and show which `detec
 
 ### Uninstall
 ```sh
-curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh --uninstall
+  curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --uninstall
 ```
 
 ## Configuration
@@ -498,16 +498,16 @@ If the outage occurs before the first layer change, the script automatically fal
 > Centauri Carbon 2 (CC2) compatibility and recovery behavior may depend on the firmware version, GPIO configuration, and printer hardware. Verify the complete recovery process on your own printer before relying on it.
 
 ## Resume sequence
-    When you choose a resume option, the module does the following:
+When you choose a resume option, the module does the following:
 
-    1. **Heats the nozzle** to `move_temp` (the bed and full nozzle target keep heating in the background) so a nozzle stuck to the part can release.
-    2. **Marks Z** at the saved height and hops up by `z_hop`.
-    3. **Homes X/Y** with a real `G28 X Y`. This avoids trusting a saved XY position that may be off by several mm due to motion lookahead.
-    4. **Corrects Z** for the `[homing_override]` lift: it re-declares Z as `saved_z + z_hop + homing_override_z_lift`.
-    5. **Waits for full temperatures**, then runs `tray_macro` (default `MOVE_TO_TRAY` on `cc1`), purges `purge_mm` of filament and runs the wipe pattern. If no `tray_macro` is set, this step is skipped entirely.
-    6. **Travels** to the saved X/Y while still elevated, then lowers to the saved Z.
-    7. **Restores extruder state** by replaying the G-code file up to the resume offset to find the extrude mode (`M82`/`M83`) and last `E` value. It does not trust Klipper's live state. Fan and speed factor are also restored.
-    8. **Reloads the file** with `M23`, `M26` and `M24`, and deletes the state file.
+1. **Heats the nozzle** to `move_temp` (the bed and full nozzle target keep heating in the background) so a nozzle stuck to the part can release.
+2. **Marks Z** at the saved height and hops up by `z_hop`.
+3. **Homes X/Y** with a real `G28 X Y`. This avoids trusting a saved XY position that may be off by several mm due to motion lookahead.
+4. **Corrects Z** for the `[homing_override]` lift: it re-declares Z as `saved_z + z_hop + homing_override_z_lift`.
+5. **Waits for full temperatures**, then runs `tray_macro` (default `MOVE_TO_TRAY` on `cc1`), purges `purge_mm` of filament and runs the wipe pattern. If no `tray_macro` is set, this step is skipped entirely.
+6. **Travels** to the saved X/Y while still elevated, then lowers to the saved Z.
+7. **Restores extruder state** by replaying the G-code file up to the resume offset to find the extrude mode (`M82`/`M83`) and last `E` value. It does not trust Klipper's live state. Fan and speed factor are also restored.
+8. **Reloads the file** with `M23`, `M26` and `M24`, and deletes the state file.
 
 The state file contains two position packages: `instant` (captured at the outage) and `checkpoint` (captured at the last layer change). Each package is only ever used as a whole. The module never mixes position and file offset from different packages.
 
