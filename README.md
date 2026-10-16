@@ -102,7 +102,7 @@ Differences from `cc1`:
 
 - **No tray macro or wipe by default.** `tray_macro` is blank and the built-in wipe pattern is disabled. The wipe uses CC1 coordinates, so it is rejected for any model other than `cc1`. If `tray_macro` is blank, the resume skips the purge entirely rather than purging over the part. Point `tray_macro` at your own parking macro if you want a purge.
 - **Re-check `homing_override_z_lift`.** It must match the Z lift in your CC2's `[homing_override]`.
-- **It is unconfirmed that your CC2 firmware has the sysfs GPIO access this module needs.** Elegoo's CC2 config shows a different architecture from the CC1 (a separate DSP core running the motion MCU), and I haven't confirmed that the CC2 runs COSMOS and a Klipper host that can load `extras` modules.
+- **Check CC2 support for your firmware version.** The module loaded and read its GPIOs on a tested CC2 running Klipper, so sysfs access works there. Elegoo's CC2 config shows a different architecture from the CC1 (a separate DSP core running the motion MCU), so check the [COSMOS docs](https://docs.opencentauri.cc/klipper-conversion/cosmos/cosmos/) and the CC2 [hardware pages](https://docs.opencentauri.cc/hardware/CC2/) for what your version supports.
 
 Use `printer_model: custom` for any other board. It has no GPIO defaults, so you must set `sensor_gpio` and `charge_gpio` yourself, and `rail_gpio` too so the rail line is guarded.
 
@@ -110,9 +110,61 @@ If you confirm the CC2 behavior on real hardware (or find that a number is wrong
 
 ## Installation
 
-COSMOS's root filesystem is read-only, so the module is installed through an overlay mount over Klipper's `extras` directory. The installer does this for you. Run it on the printer as root.
+COSMOS's root filesystem is read-only, so the module is installed through an overlay mount over Klipper's `extras` directory. The installer does this for you, but you run it **on the printer itself, over SSH**. It is not something you run on your computer.
 
-### One-line install
+The whole process:
+
+1. [Connect to the printer over SSH](#1-connect-to-the-printer-over-ssh).
+2. [Run the installer](#2-run-the-installer) in that SSH session.
+3. [Add the config and restart Klipper](#3-add-the-config-and-restart-klipper).
+
+### Before you start
+
+You need:
+
+- **COSMOS already installed and working.** See the COSMOS [install guide](https://docs.opencentauri.cc/klipper-conversion/cosmos/install/) and [About COSMOS](https://docs.opencentauri.cc/klipper-conversion/cosmos/cosmos/).
+- **The printer on your network**, and its IP address (from your router's device list or the printer's network settings).
+- **An SSH client.** macOS and Linux have `ssh` in the terminal. Windows 10 and later have it in PowerShell and Windows Terminal, or you can use PuTTY.
+- **No print running.** The installer doesn't restart Klipper, but you'll need to restart it afterwards.
+
+### 1. Connect to the printer over SSH
+
+From a terminal on your computer, replace `<printer-ip>` with the printer's IP address:
+
+```sh
+ssh root@<printer-ip>
+```
+
+The first time you connect, SSH asks you to accept the printer's host key. Type `yes`.
+
+**Default login:** user `root`, password `OpenCentauri`.
+
+> [!WARNING]
+> That is a well-known default, so anyone on your network who knows it can log in as root. Change it after your first login, or switch to key-based login:
+> - `passwd` on the printer sets a new password.
+> - `ssh-copy-id root@<printer-ip>` from your computer installs your SSH key, which the OpenCentauri firmware tools README recommends. Don't expose the printer's SSH port to the internet.
+
+I took those credentials from the OpenCentauri documentation for its patched firmware and the OpenCentauri firmware tools README, and third-party COSMOS add-ons use the same login. The COSMOS install guide itself only says to "log into your printer via SSH" (it uses SSH for `update-cosmos`), so if the login doesn't work on your version, check the COSMOS docs or ask on the OpenCentauri Discord.
+
+If SSH says `Permission denied`, the password is wrong. If it says `Connection refused` or times out, check the IP address and that the printer is on your network.
+
+**Where to read more:**
+
+| Topic                                      | Link                                                                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| COSMOS repository and release changelogs   | [OpenCentauri/cosmos](https://github.com/OpenCentauri/cosmos) and its [releases](https://github.com/OpenCentauri/cosmos/releases) |
+| Installing and updating COSMOS             | [COSMOS: Install](https://docs.opencentauri.cc/klipper-conversion/cosmos/install/)                                      |
+| Where `printer.cfg` lives, `cosmos.conf`, recovery | [COSMOS: Features](https://docs.opencentauri.cc/klipper-conversion/cosmos/features/): "Klipper Configuration", "COSMOS settings", "Recovery" |
+| Fixing config problems                     | [COSMOS: Troubleshooting, Configuration and recovery](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/recovery/) |
+| Memory and stability limits                | [COSMOS: Troubleshooting, Stability and memory](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/stability/) |
+| SSH login for OpenCentauri firmware        | [Patched firmware: Features](https://docs.opencentauri.cc/patched-firmware/features/) and [cc-fw-tools](https://github.com/OpenCentauri/cc-fw-tools) |
+| Community help                             | [OpenCentauri Discord](https://discord.gg/t6Cft3wNJ3)                                             |
+
+### 2. Run the installer
+
+Run this in your SSH session.
+
+#### One-line install
 
 To pin a specific release, replace `main` with a tag or commit:
 
@@ -127,7 +179,19 @@ curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLo
 ```
 
 > [!NOTE]
-> Piping a script into `sh` runs whatever is at that URL. If you'd rather read it first, download `install.sh`, open it, then run `sh install.sh`. The installer only needs `curl` or `wget`.
+> This needs the printer to have internet access and either `curl` or `wget`. If it doesn't, use [Copy the files over](#copy-the-files-over-no-internet-on-the-printer) below. Piping a script into `sh` runs whatever is at that URL. If you'd rather read it first, download `install.sh`, open it, then run `sh install.sh`. The installer only needs `curl` or `wget`.
+
+#### Copy the files over (no internet on the printer)
+
+Download `install.sh` and `power_loss.py` to a folder on your computer, then from that folder:
+
+```sh
+scp install.sh power_loss.py root@<printer-ip>:/tmp/
+ssh root@<printer-ip>
+sh /tmp/install.sh
+```
+
+The installer uses the `power_loss.py` sitting next to it instead of downloading one. If `scp` fails with an SFTP-related error, add `-O` (`scp -O ...`). If `/tmp` isn't usable, any writable directory such as `/user-resource` works.
 
 ### What the installer does
 
@@ -149,7 +213,7 @@ It never restarts Klipper, because that would interrupt a print. Restart it your
 | --------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `--model cc1\|cc2\|custom`    | Skip detection and prompts.                                                                          |
 | `--sensor N --charge N --rail N` | Linux GPIO numbers for `--model custom`. The rail line is guarded and never driven.            |
-| `--printer-cfg PATH`        | Append the `[power_loss]` section to this file. It is skipped if the file already has one.           |
+| `--printer-cfg PATH`        | Append the `[power_loss]` section to this file. It is skipped if the file already has one. Pasting it into `printer.cfg` in the web interface works just as well. |
 | `--yes`, `-y`               | Accept the detected model without asking. It fails if nothing could be detected.                     |
 | `--no-persist`              | Don't patch the init script. The mount then lasts until the next reboot.                             |
 | `--uninstall`               | Remove the module, the init patch and the overlay. The saved state file and your `printer.cfg` are left alone. |
@@ -195,13 +259,19 @@ if ! grep -q '^klipper-extras-overlay ' /proc/mounts; then
 fi
 ```
 
-### Enable and verify
+### 3. Add the config and restart Klipper
 
-Add a `[power_loss]` section to `printer.cfg` (the installer prints one for your model; see [Configuration](#configuration)), then restart Klipper while no print is running:
+Add the `[power_loss]` section the installer printed (see [Configuration](#configuration) for every option) to `printer.cfg`. The COSMOS docs say `printer.cfg` is the user-facing config and can be edited in the web interface, so the easiest way is to paste the section there. Don't put it in `klipper-readonly/*.cfg`: COSMOS resets those files on every firmware update (see [COSMOS: Features](https://docs.opencentauri.cc/klipper-conversion/cosmos/features/)).
 
-```sh
-service klipper restart
+Then restart Klipper while no print is running, by running this in the web interface's console:
+
 ```
+RESTART
+```
+
+If the module doesn't load, `REBOOT_MACHINE` does a full reboot. The installer's overlay mount is set up at boot, so a reboot also confirms that it persists.
+
+#### Verify
 
 In the Mainsail/Fluidd console run:
 
@@ -306,6 +376,7 @@ The state file contains two position packages: `instant` (captured at the outage
 - **`homing_override_z_lift` is printer-specific.** The Z correction assumes a real `G0 Z<N>` inside your `[homing_override]` macro. If you change that macro, this value becomes silently wrong.
 - **The wipe pattern and `MOVE_TO_TRAY` are CC1 specific.** The wipe coordinates are hardcoded, so the module only allows `wipe: True` with `printer_model: cc1`. Set `wipe: False` to skip it, or use `tray_macro` for your own sequence.
 - **Motor and heater power during an outage is unconfirmed.** The module assumes there is none and doesn't attempt an emergency retract or Z hop at outage time.
+- **Polling uses a small timer.** The COSMOS docs warn that the stock mainboard has little spare resource (see [Stability and memory](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/stability/)). In `polling` mode the module reads the sensor every `poll_interval` seconds (default 0.01). If you see stability problems, try a larger value such as `0.02`. Outage detection is then delayed by up to that long.
 - **Filesystems stay read-only until reboot.** After an outage the module remounts the writable filesystems (including the USB stick) read-only and doesn't undo it. If power returns before the board dies, the printer keeps running but can't write files, so reboot it. A possible improvement is to detect power returning and reboot or remount automatically.
 - **A brief outage still runs the full flow.** Debounce filters noise and sub-`debounce_time` flickers, but any outage longer than that triggers the save and filesystem protection even if power returns a moment later.
 - **The resume leaves a visible seam** where the print continues. This is inherent to this kind of recovery.
