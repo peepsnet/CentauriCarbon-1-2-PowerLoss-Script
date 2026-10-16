@@ -32,8 +32,8 @@ This project provides a custom Klipper power_loss module and installer that dete
 - [Centauri Carbon 2](#centauri-carbon-2)
 - [Installation](#installation)
     - [Connecting over SSH](#connecting-over-ssh).
-    - [Auto installing on the Centauri Carbon 1](#auto-installl-cc1)
-    - [Auto installing on the Centauri Carbon 2](#auto-installl-cc2)
+    - [Auto installing on the Centauri Carbon 1](#auto-installing-on-the-centauri-carbon-1)
+    - [Auto installing on the Centauri Carbon 2](#auto-installing-on-the-centauri-carbon-2)
     - General Installer Operations
     - Options
     - Manual install
