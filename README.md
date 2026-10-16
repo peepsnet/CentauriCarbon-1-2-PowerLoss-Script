@@ -228,7 +228,7 @@ COSMOS on the CC1 is installed with the OpenCentauri installer, as described on 
 Once the printer is running the updated COSMOS Firmware, install this module:
 
 1. **Install COSMOS Firmware.** Follow the official [CC2 COSMOS install guide](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488). 
-2. **Connect over SSH** as `root` with the password `OpenCentauri`. See [Connecting over SSH](#connecting-over-ssh).
+2. **Connect over SSH** as `root` and leave the password blank. See [Connecting over SSH](#connecting-over-ssh).
 3. **Run the installer** from the SSH session. See [Running the installer](#running-the-installer):
    ```sh
    curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh
