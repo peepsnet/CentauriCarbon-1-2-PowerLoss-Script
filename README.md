@@ -98,7 +98,7 @@ jagonmo reported this from a real outage test on a CC1 with mains fully unplugge
 printer_model: cc1
 sensor_gpio: 192      # PG0
 charge_gpio: 65       # PC1
-rail_gpio: 203        # PG11, guarded and never driven
+rail_gpio: 203        # PG11, guarded and never drive
 ```
 > [!IMPORTANT]
 >These settings need to be added to the `printer.cfg` through the Web Interface. 
@@ -342,42 +342,36 @@ fi
 
 Add the `[power_loss]` section the installer printed (see [Configuration](#configuration) for every option) to `printer.cfg`. The COSMOS docs say `printer.cfg` is the user-facing config and can be edited in the web interface, so the easiest way is to paste the section there. Don't put it in `klipper-readonly/*.cfg`: COSMOS resets those files on every firmware update (see [COSMOS: Features](https://docs.opencentauri.cc/klipper-conversion/cosmos/features/)).
 
-<table>
-    <tr><th>CC1 Minimal Config</th><th>&nbsp;&nbsp;</th><th>CC2 Minimal Config</th></tr>
-    <tr>
-        <td>
+<details><summary><b>CC1 minimal printer.cfg entry</b></summary>
+
+```ini
+[power_loss]
+printer_model: cc1
+save_path: /data/power_loss_state.json
+# Must match the Z lift in your [homing_override]:
+homing_override_z_lift: 5.0
+```
+</details>
+<details><summary><b>CC2 minimal printer.cfg entry</b></summary>
+    
 ```ini
 [power_loss]
 printer_model: cc2
 save_path: /data/power_loss_state.json
 # Must match the Z lift in your [homing_override]:
 homing_override_z_lift: 5.0
-# CC2: check polarity with POWER_LOSS_TEST_READ N=100 (mains on).
-# If every reading is 1, uncomment:
-#invert_sensor: True
 ```
-        </td>
-        <td>&nbsp;&nbsp;</td>
-        <td>
-```ini
-[power_loss]
-printer_model: cc2
-save_path: /data/power_loss_state.json
-# Must match the Z lift in your [homing_override]:
-homing_override_z_lift: 5.0
-# CC2: check polarity with POWER_LOSS_TEST_READ N=100 (mains on).
-# If every reading is 1, uncomment:
-#invert_sensor: True
-```
-        </td>
-    </tr>
-</table>
+</details>
 
 Then restart Klipper while no print is running, by running this in the web interface's console:
-
 ```
 RESTART
 ```
+or Restart the entire printer from the command line
+```sh
+reboot
+```
+
 
 If the module doesn't load, `REBOOT_MACHINE` does a full reboot. The installer's overlay mount is set up at boot, so a reboot also confirms that it persists.
 
