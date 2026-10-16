@@ -200,22 +200,24 @@ COSMOS on the CC1 is installed with the OpenCentauri installer, as described on 
 2. **Connect over SSH** as `root` with the password `OpenCentauri`. See [Connecting over SSH](#connecting-over-ssh).
 3. **Run the installer** from the SSH session. See [Running the installer](#running-the-installer):
 
+    ```sh
+   curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh
+   ```
+   or if you want to bypass the scripts auto printer detection feature and specify the CC2 then use:
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc1
+   curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc
    ```
 
-4. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc1` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
+5. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc1` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
 
 ### Installing on the Centauri Carbon 2 (alpha)
 
-> [!CAUTION]
-> COSMOS for the CC2 is an early **technical preview in alpha testing** at the time of writing.
-
-> [!CAUTION]
->This applies to the **CC2 and CC2C only**; the C2 and C2C aren't supported.
-> To install COSMOS on your CC2 follow the steps in OpenCentauri's alpha announcement on their Discord: [announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488).
-> That post is the source of truth and may have changed, so read it before you begin and report what you run into, good and bad.
-> I used this method on my CC2.
+    > [!CAUTION]
+    > COSMOS for the CC2 is an early **technical preview in alpha testing** at the time of writing.
+    >This applies to the **CC2 and CC2C only**; the C2 and C2C aren't supported.
+    > To install COSMOS on your CC2 follow the steps in OpenCentauri's alpha announcement on their Discord: [announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488).
+    > That post is the source of truth and may have changed, so read it before you begin and report what you run into, good and bad.
+    > I used this method on my CC2.
 
 Once the printer is running the updated COSMOS Firmware, install this module:
 
@@ -231,19 +233,6 @@ Once the printer is running the updated COSMOS Firmware, install this module:
 
 11. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc2` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
 12. **Verify the sensor** before trusting a save. The CC2 pin defaults are partly tested, so read the [Centauri Carbon 2](#centauri-carbon-2) section first.
-
-**Where to read more:**
-
-| Topic                                      | Link                                                                                              |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| COSMOS repository and release changelogs   | [OpenCentauri/cosmos](https://github.com/OpenCentauri/cosmos) and its [releases](https://github.com/OpenCentauri/cosmos/releases) |
-| Installing and updating COSMOS             | [COSMOS: Install](https://docs.opencentauri.cc/klipper-conversion/cosmos/install/)                                      |
-| CC2 alpha COSMOS build                     | [OpenCentauri Discord announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488) |
-| Where `printer.cfg` lives, `cosmos.conf`, recovery | [COSMOS: Features](https://docs.opencentauri.cc/klipper-conversion/cosmos/features/): "Klipper Configuration", "COSMOS settings", "Recovery" |
-| Fixing config problems                     | [COSMOS: Troubleshooting, Configuration and recovery](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/recovery/) |
-| Memory and stability limits                | [COSMOS: Troubleshooting, Stability and memory](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/stability/) |
-| SSH login for OpenCentauri firmware        | [Patched firmware: Features](https://docs.opencentauri.cc/patched-firmware/features/) and [cc-fw-tools](https://github.com/OpenCentauri/cc-fw-tools) |
-| Community help                             | [OpenCentauri Discord](https://discord.gg/t6Cft3wNJ3)                                             |
 
 ### Running the installer
 
@@ -503,22 +492,33 @@ If the outage occurs before the first layer change, the script automatically fal
 > [!WARNING]
 > Centauri Carbon 2 (CC2) compatibility and recovery behavior may depend on the firmware version, GPIO configuration, and printer hardware. Verify the complete recovery process on your own printer before relying on it.
 
-
-
 ## Resume sequence
+    When you choose a resume option, the module does the following:
 
-When you choose a resume option, the module does the following:
-
-1. **Heats the nozzle** to `move_temp` (the bed and full nozzle target keep heating in the background) so a nozzle stuck to the part can release.
-2. **Marks Z** at the saved height and hops up by `z_hop`.
-3. **Homes X/Y** with a real `G28 X Y`. This avoids trusting a saved XY position that may be off by several mm due to motion lookahead.
-4. **Corrects Z** for the `[homing_override]` lift: it re-declares Z as `saved_z + z_hop + homing_override_z_lift`.
-5. **Waits for full temperatures**, then runs `tray_macro` (default `MOVE_TO_TRAY` on `cc1`), purges `purge_mm` of filament and runs the wipe pattern. If no `tray_macro` is set, this step is skipped entirely.
-6. **Travels** to the saved X/Y while still elevated, then lowers to the saved Z.
-7. **Restores extruder state** by replaying the G-code file up to the resume offset to find the extrude mode (`M82`/`M83`) and last `E` value. It does not trust Klipper's live state. Fan and speed factor are also restored.
-8. **Reloads the file** with `M23`, `M26` and `M24`, and deletes the state file.
+    1. **Heats the nozzle** to `move_temp` (the bed and full nozzle target keep heating in the background) so a nozzle stuck to the part can release.
+    2. **Marks Z** at the saved height and hops up by `z_hop`.
+    3. **Homes X/Y** with a real `G28 X Y`. This avoids trusting a saved XY position that may be off by several mm due to motion lookahead.
+    4. **Corrects Z** for the `[homing_override]` lift: it re-declares Z as `saved_z + z_hop + homing_override_z_lift`.
+    5. **Waits for full temperatures**, then runs `tray_macro` (default `MOVE_TO_TRAY` on `cc1`), purges `purge_mm` of filament and runs the wipe pattern. If no `tray_macro` is set, this step is skipped entirely.
+    6. **Travels** to the saved X/Y while still elevated, then lowers to the saved Z.
+    7. **Restores extruder state** by replaying the G-code file up to the resume offset to find the extrude mode (`M82`/`M83`) and last `E` value. It does not trust Klipper's live state. Fan and speed factor are also restored.
+    8. **Reloads the file** with `M23`, `M26` and `M24`, and deletes the state file.
 
 The state file contains two position packages: `instant` (captured at the outage) and `checkpoint` (captured at the last layer change). Each package is only ever used as a whole. The module never mixes position and file offset from different packages.
+
+**Where to read more:**
+
+| Topic                                      | Link                                                                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| COSMOS repository and release changelogs   | [OpenCentauri/cosmos](https://github.com/OpenCentauri/cosmos) and its [releases](https://github.com/OpenCentauri/cosmos/releases) |
+| Installing and updating COSMOS             | [COSMOS: Install](https://docs.opencentauri.cc/klipper-conversion/cosmos/install/)                                      |
+| CC2 alpha COSMOS build                     | [OpenCentauri Discord announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488) |
+| Where `printer.cfg` lives, `cosmos.conf`, recovery | [COSMOS: Features](https://docs.opencentauri.cc/klipper-conversion/cosmos/features/): "Klipper Configuration", "COSMOS settings", "Recovery" |
+| Fixing config problems                     | [COSMOS: Troubleshooting, Configuration and recovery](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/recovery/) |
+| Memory and stability limits                | [COSMOS: Troubleshooting, Stability and memory](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/stability/) |
+| SSH login for OpenCentauri firmware        | [Patched firmware: Features](https://docs.opencentauri.cc/patched-firmware/features/) and [cc-fw-tools](https://github.com/OpenCentauri/cc-fw-tools) |
+| Community help                             | [OpenCentauri Discord](https://discord.gg/t6Cft3wNJ3)                                             |
+
 
 ## Known limitations
 
