@@ -8,7 +8,7 @@ A Klipper extras module that detects a real mains power outage using the Centaur
 | Model                    | Status                                                                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------ |
 | Centauri Carbon 1 (CC1)  | Built-in defaults (`printer_model: cc1`).                                                        |
-| Centauri Carbon 2 (CC2)  | Defaults from Elegoo's official config (`printer_model: cc2`). The outage sensor is confirmed by an unplug test on a real CC2; the charge pin is not independently verified. See [Centauri Carbon 2](#centauri-carbon-2). |
+| Centauri Carbon 2 (CC2)  | COSMOS for the CC2 is in alpha. Defaults from Elegoo's official config (`printer_model: cc2`). The outage sensor is confirmed by an unplug test on a real CC2; the charge pin is not independently verified. See [Centauri Carbon 2](#centauri-carbon-2). |
 
 > [!WARNING]
 > This module is experimental and has not been validated across printers or hardware revisions. Test it with a print you don't care about before relying on it. See [Known limitations](#known-limitations).
@@ -90,7 +90,7 @@ rail_gpio: 203        # PG11, guarded and never driven
 
 ### Hardware test results
 
-One tester ran this on a CC2 with the default `cc2` profile:
+One tester ran this on a CC2 (alpha COSMOS, installed as described in [Installing on the Centauri Carbon 2](#installing-on-the-centauri-carbon-2-alpha)) with the default `cc2` profile:
 
 - `POWER_LOSS_STATUS` reported `model=cc2 sensor=GPIO201 charge=GPIO116 rail_guard=203`, and `charge_done` became `True` after about 30 seconds. Detection ran in `polling` mode.
 - With mains on, `POWER_LOSS_TEST_READ N=100` returned 100 zeros, so the default polarity (1 means outage) is right and `invert_sensor` isn't needed.
@@ -102,7 +102,7 @@ Differences from `cc1`:
 
 - **No tray macro or wipe by default.** `tray_macro` is blank and the built-in wipe pattern is disabled. The wipe uses CC1 coordinates, so it is rejected for any model other than `cc1`. If `tray_macro` is blank, the resume skips the purge entirely rather than purging over the part. Point `tray_macro` at your own parking macro if you want a purge.
 - **Re-check `homing_override_z_lift`.** It must match the Z lift in your CC2's `[homing_override]`.
-- **Check CC2 support for your firmware version.** The module loaded and read its GPIOs on a tested CC2 running Klipper, so sysfs access works there. Elegoo's CC2 config shows a different architecture from the CC1 (a separate DSP core running the motion MCU), so check the [COSMOS docs](https://docs.opencentauri.cc/klipper-conversion/cosmos/cosmos/) and the CC2 [hardware pages](https://docs.opencentauri.cc/hardware/CC2/) for what your version supports.
+- **COSMOS for the CC2 is in alpha.** The module loaded and read its GPIOs on a tested CC2 running that build, so sysfs access works there, but alpha firmware can change between releases. Elegoo's CC2 config shows a different architecture from the CC1 (a separate DSP core running the motion MCU), so check the [COSMOS docs](https://docs.opencentauri.cc/klipper-conversion/cosmos/cosmos/), the CC2 [hardware pages](https://docs.opencentauri.cc/hardware/CC2/) and the [alpha announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488) for what your build supports.
 
 Use `printer_model: custom` for any other board. It has no GPIO defaults, so you must set `sensor_gpio` and `charge_gpio` yourself, and `rail_gpio` too so the rail line is guarded.
 
@@ -112,41 +112,93 @@ If you confirm the CC2 behavior on real hardware (or find that a number is wrong
 
 COSMOS's root filesystem is read-only, so the module is installed through an overlay mount over Klipper's `extras` directory. The installer does this for you, but you run it **on the printer itself, over SSH**. It is not something you run on your computer.
 
-The whole process:
+Follow the section for your printer:
 
-1. [Connect to the printer over SSH](#1-connect-to-the-printer-over-ssh).
-2. [Run the installer](#2-run-the-installer) in that SSH session.
-3. [Add the config and restart Klipper](#3-add-the-config-and-restart-klipper).
+- [Centauri Carbon 1](#installing-on-the-centauri-carbon-1): COSMOS is installed with the standard OpenCentauri method.
+- [Centauri Carbon 2 (alpha)](#installing-on-the-centauri-carbon-2-alpha): COSMOS for the CC2 is in alpha testing, so the install is different and riskier.
 
-### Before you start
+Both sections end with the same two shared steps, described after them: [running the installer](#running-the-installer) and [adding the config](#add-the-config-and-restart-klipper).
 
-You need:
+### Installing on the Centauri Carbon 1
 
-- **COSMOS already installed and working.** See the COSMOS [install guide](https://docs.opencentauri.cc/klipper-conversion/cosmos/install/) and [About COSMOS](https://docs.opencentauri.cc/klipper-conversion/cosmos/cosmos/).
-- **The printer on your network**, and its IP address (from your router's device list or the printer's network settings).
-- **An SSH client.** macOS and Linux have `ssh` in the terminal. Windows 10 and later have it in PowerShell and Windows Terminal, or you can use PuTTY.
-- **No print running.** The installer doesn't restart Klipper, but you'll need to restart it afterwards.
+COSMOS on the CC1 is installed with the OpenCentauri installer, as described on the OpenCentauri website. This module goes on top of a working COSMOS install.
 
-### 1. Connect to the printer over SSH
+**You need:** a CC1 running COSMOS, the printer on your network (and its IP address), an SSH client, and no print running.
 
-From a terminal on your computer, replace `<printer-ip>` with the printer's IP address:
+1. **Install COSMOS.** Follow the official [COSMOS install guide](https://docs.opencentauri.cc/klipper-conversion/cosmos/install/). In short, you put the OpenCentauri installer on a FAT32 USB stick, import it from the printer's file screen, and choose the online or USB install. Read the [COSMOS release changelogs](https://github.com/OpenCentauri/cosmos/releases) first, because they can contain migration steps, and run the calibration the guide describes.
+2. **Connect over SSH** as `root` with the password `OpenCentauri`. See [Connecting over SSH](#connecting-over-ssh).
+3. **Run the installer** from the SSH session. See [Running the installer](#running-the-installer):
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc1
+   ```
+
+4. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc1` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
+
+### Installing on the Centauri Carbon 2 (alpha)
+
+> [!CAUTION]
+> COSMOS for the CC2 is an early **technical preview in alpha testing** at the time of writing. Expect problems, and only install it if you have the technical know-how to recover a printer that stops booting. **Recovery needs a 3.3 V logic-level USB UART adapter** (for example a CP2101, PL2303 or FT232 based one). Don't start without one.
+
+This applies to the **CC2 and CC2C only**; the C2 and C2C aren't supported. The steps below summarize OpenCentauri's alpha announcement on their Discord: [announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488). That post is the source of truth and may have changed, so read it before you begin and report what you run into, good and bad. The author of this module used this method on a CC2.
+
+**You need:**
+
+- A CC2 or CC2C on any firmware.
+- The 3.3 V USB UART adapter described above.
+- A USB stick (any size, FAT32).
+- A GitHub account that's logged in, to download the build artifact.
+- The OTA build artifact from the [OpenCentauri/cosmos Actions run for `centauri-carbon-2`](https://github.com/OpenCentauri/cosmos/actions/runs/38072174747). The announcement calls it a `.zip.sig` artifact and then refers to a `.swu.sig` file for the USB stick, so check the post for exactly which file to copy.
+- The [OrcaSlicer CC2 COSMOS profile](https://cloud.orcaslicer.com/b/331b32d95aab) installed. It supports the 0.4 mm nozzle only for now.
+- The printer on your network and an SSH client.
+
+**Steps:**
+
+1. Put the `.swu.sig` file on the USB stick and insert the stick into the printer.
+2. On the printer, go to offline updates and install the COSMOS update. The announcement guessed the version would be `26.09.00.00`, so go by what the printer offers.
+3. After it reboots you should be in COSMOS. When the calibration popup appears, **don't calibrate yet**. Dismiss it.
+4. Connect the printer to wifi, then SSH in as `root` with **no password**. See [Connecting over SSH](#connecting-over-ssh).
+5. With the USB stick still inserted, make a recovery backup of the printer's storage:
+
+   ```sh
+   dd if=/dev/mmcblk0 bs=512 | gzip > /tmp/usb/sda1/cc2-cosmos.bin.gz
+   ```
+
+   This copies the entire storage device, so make sure the stick has room for the compressed image.
+6. Open the web interface, go to the machine tab, open `cosmos.conf`, set the update channel to `nightly`, save, and restart the machine.
+7. Back on the machine tab, update COSMOS.
+8. After the update you can continue with calibration as normal.
+
+Once the printer is running the updated COSMOS, install this module:
+
+9. **Connect over SSH** again (user `root`, no password) and **run the installer**. See [Running the installer](#running-the-installer):
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc2
+   ```
+
+10. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc2` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
+11. **Verify the sensor** before trusting a save. The CC2 pin defaults are partly tested, so read the [Centauri Carbon 2](#centauri-carbon-2) section first.
+
+### Connecting over SSH
+
+From a terminal on your computer, replace `<printer-ip>` with the printer's IP address (from your router's device list or the printer's network settings):
 
 ```sh
 ssh root@<printer-ip>
 ```
 
-The first time you connect, SSH asks you to accept the printer's host key. Type `yes`.
+The first time you connect, SSH asks you to accept the printer's host key. Type `yes`. macOS and Linux have `ssh` in the terminal, Windows 10 and later have it in PowerShell and Windows Terminal, and PuTTY also works.
 
-**Default login:** user `root`, password `OpenCentauri`.
+| Printer                  | User   | Password        | Source                                                                                      |
+| ------------------------ | ------ | --------------- | ------------------------------------------------------------------------------------------- |
+| CC1 (COSMOS)             | `root` | `OpenCentauri`  | OpenCentauri docs for the patched firmware, the cc-fw-tools README, and third-party COSMOS add-ons. The COSMOS install guide doesn't state it. |
+| CC2 (COSMOS alpha)       | `root` | none            | OpenCentauri's CC2 alpha announcement.                                                      |
 
 > [!WARNING]
-> That is a well-known default, so anyone on your network who knows it can log in as root. Change it after your first login, or switch to key-based login:
-> - `passwd` on the printer sets a new password.
-> - `ssh-copy-id root@<printer-ip>` from your computer installs your SSH key, which the OpenCentauri firmware tools README recommends. Don't expose the printer's SSH port to the internet.
+> Both are open or well-known logins, so anyone on your network can log in as root. Don't expose the printer's SSH port to the internet. Consider switching to key-based login with `ssh-copy-id root@<printer-ip>`, which the OpenCentauri firmware tools README recommends, and use `passwd` on the printer to set a password.
 
-I took those credentials from the OpenCentauri documentation for its patched firmware and the OpenCentauri firmware tools README, and third-party COSMOS add-ons use the same login. The COSMOS install guide itself only says to "log into your printer via SSH" (it uses SSH for `update-cosmos`), so if the login doesn't work on your version, check the COSMOS docs or ask on the OpenCentauri Discord.
-
-If SSH says `Permission denied`, the password is wrong. If it says `Connection refused` or times out, check the IP address and that the printer is on your network.
+If SSH says `Permission denied`, the password is wrong or the login has changed on your version, so check the COSMOS docs or ask on the OpenCentauri Discord. If it says `Connection refused` or times out, check the IP address and that the printer is on your network.
 
 **Where to read more:**
 
@@ -154,15 +206,16 @@ If SSH says `Permission denied`, the password is wrong. If it says `Connection r
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | COSMOS repository and release changelogs   | [OpenCentauri/cosmos](https://github.com/OpenCentauri/cosmos) and its [releases](https://github.com/OpenCentauri/cosmos/releases) |
 | Installing and updating COSMOS             | [COSMOS: Install](https://docs.opencentauri.cc/klipper-conversion/cosmos/install/)                                      |
+| CC2 alpha COSMOS build                     | [OpenCentauri Discord announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488) |
 | Where `printer.cfg` lives, `cosmos.conf`, recovery | [COSMOS: Features](https://docs.opencentauri.cc/klipper-conversion/cosmos/features/): "Klipper Configuration", "COSMOS settings", "Recovery" |
 | Fixing config problems                     | [COSMOS: Troubleshooting, Configuration and recovery](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/recovery/) |
 | Memory and stability limits                | [COSMOS: Troubleshooting, Stability and memory](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/stability/) |
 | SSH login for OpenCentauri firmware        | [Patched firmware: Features](https://docs.opencentauri.cc/patched-firmware/features/) and [cc-fw-tools](https://github.com/OpenCentauri/cc-fw-tools) |
 | Community help                             | [OpenCentauri Discord](https://discord.gg/t6Cft3wNJ3)                                             |
 
-### 2. Run the installer
+### Running the installer
 
-Run this in your SSH session.
+Run this in your SSH session on the printer. It is the same for both models.
 
 #### One-line install
 
@@ -172,7 +225,7 @@ To pin a specific release, replace `main` with a tag or commit:
 curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh
 ```
 
-To pass options, use `sh -s --`:
+To pass options, such as the model, use `sh -s --`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc2
@@ -259,7 +312,7 @@ if ! grep -q '^klipper-extras-overlay ' /proc/mounts; then
 fi
 ```
 
-### 3. Add the config and restart Klipper
+### Add the config and restart Klipper
 
 Add the `[power_loss]` section the installer printed (see [Configuration](#configuration) for every option) to `printer.cfg`. The COSMOS docs say `printer.cfg` is the user-facing config and can be edited in the web interface, so the easiest way is to paste the section there. Don't put it in `klipper-readonly/*.cfg`: COSMOS resets those files on every firmware update (see [COSMOS: Features](https://docs.opencentauri.cc/klipper-conversion/cosmos/features/)).
 
