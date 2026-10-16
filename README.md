@@ -354,9 +354,9 @@ After about 30 seconds it should report `charge_done=True` and show which `detec
 
 ### Uninstall
 
-```sh
-sh install.sh --uninstall
-```
+    ```sh
+       curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh --uninstall
+   ```
 
 ## Configuration
 
