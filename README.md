@@ -17,6 +17,7 @@ A Klipper extras module that detects a real mains power outage using the Centaur
 
 - [How it works](#how-it-works)
 - [Hardware](#hardware)
+- [Centauri Carbon 1](#centauri-carbon-1)
 - [Centauri Carbon 2](#centauri-carbon-2)
 - [Installation](#installation)
 - [Configuration](#configuration)
@@ -67,6 +68,40 @@ Linux GPIO numbers use the Allwinner rule `32 × (port letter index, A=0) + pin`
 > The "supercap output to rail" line connects the supercap to the power rail. The module refuses to start if the configured `rail_gpio` is also used as the sensor or charge pin. On both CC1 and CC2 that is GPIO 203 and is guarded by default. Don't remove that guard without checking with a multimeter what is on the other side.
 
 jagonmo reported this from a real outage test on a CC1 with mains fully unplugged: with the supercap charged, the SoC stayed alive for roughly 5–15 seconds. Whether motors and heaters keep any residual power is **unconfirmed**, so the module assumes they don't and only moves the toolhead on resume.
+
+## Centauri Carbon 1
+
+`printer_model: cc1` is the default, so on a CC1 you don't have to set the model at all. The module uses these defaults:
+
+```ini
+[power_loss]
+printer_model: cc1
+sensor_gpio: 192      # PG0
+charge_gpio: 65       # PC1
+rail_gpio: 203        # PG11, guarded and never driven
+```
+
+**Where the numbers come from.** The CC1 is the printer the original module was written for. The pins come from Elegoo's official CC1 firmware sources (`gpio.h` and `por.cpp`), as worked out in [jagonmo's original module](https://gist.github.com/jagonmo/b14d6420d6d4af3de0ad6a0cdce5524c). The ports convert to Linux GPIO numbers with the standard Allwinner formula, `32 × (port letter index, A=0) + pin`: PG0 is 32 × 6 + 0 = 192, PC1 is 32 × 2 + 1 = 65, and PG11 is 32 × 6 + 11 = 203. The same pin table was posted in [OpenCentauri/cosmos issue 348](https://github.com/OpenCentauri/cosmos/issues/348).
+
+> [!NOTE]
+> Unlike the CC2 defaults, the CC1 pins were confirmed on real hardware by the original author, so you don't need to re-derive them. You should still verify the module on your own printer before trusting it with a long print:
+> 1. Run `POWER_LOSS_STATUS` and check that it shows `model=cc1 sensor=GPIO192 charge=GPIO65 rail_guard=203`. After about 30 seconds `charge_done` should become `True`.
+> 2. Run `POWER_LOSS_TEST_READ N=100` with mains on. The readings should be all `0`. The default polarity is that `1` means an outage.
+> 3. With the printer idle, unplug mains for about 10 seconds and check `klippy.log` for `power_loss: OUTAGE DETECTED`.
+> 4. Only then do a controlled test with a print you don't care about.
+
+### CC1 test status
+
+- **Original author's test.** jagonmo ran the original module on a real CC1 running COSMOS with mains fully unplugged. With the supercap charged, the SoC stayed alive for roughly 5–15 seconds.
+- **This version.** The hardware results listed in this README for this version (the debounce, atomic save, model profiles and installer) come from a CC2. No CC1 results have been reported for it yet, so treat the CC1 path as limited-tested until they are.
+
+What the `cc1` profile sets up that the other models don't:
+
+- **Tray macro and wipe.** `tray_macro` defaults to `MOVE_TO_TRAY`, and the built-in wipe pattern is on. The wipe uses fixed CC1 coordinates, which is why it is only allowed with `printer_model: cc1`. Set `wipe: False` to skip it, or point `tray_macro` at your own sequence.
+- **`homing_override_z_lift`.** The default of `5.0` matches the Z lift in the COSMOS `[homing_override]` that the original was written against. If you changed that macro, update this value to match, or the resumed Z height will be wrong.
+- **COSMOS status.** COSMOS on the CC1 is described by its docs as stable enough for everyday printing but still actively developed, and it warns that the stock mainboard has very little spare resource (see [Stability and memory](https://docs.opencentauri.cc/klipper-conversion/cosmos/troubleshooting/stability/)). Read the [release changelogs](https://github.com/OpenCentauri/cosmos/releases) before updating COSMOS, because an update can overwrite the init script change the installer makes.
+
+If you test this on a CC1 (or find that something doesn't match), please open an issue or PR so this section can record it.
 
 ## Centauri Carbon 2
 
