@@ -444,13 +444,10 @@ In edge mode, the pin level is re-read after `debounce_time` to confirm the outa
 ## Usage
 
 ### Resume Precise vs. Resume Safe
-
 The power-loss recovery script offers two recovery modes: **Resume Precise** and **Resume Safe**. Both allow you to continue an interrupted print, but they differ in which saved checkpoint they use to determine where printing should resume.
 
 #### 1. Resume Precise
-
 **Purpose:** Resume as close as possible to the exact point where power was lost.
-
 Resume Precise uses the position and G-code file offset saved when the power outage was detected.
 
 **Advantages**
@@ -465,10 +462,9 @@ Resume Precise uses the position and G-code file offset saved when the power out
 
 **Best suited for:** Situations where minimizing repeated printing is a priority and you are comfortable with the potential recovery risks.
 
+
 #### 2. Resume Safe
-
 **Purpose:** Resume from a more conservative checkpoint to reduce the risk of restarting in the middle of a movement or extrusion operation.
-
 Resume Safe uses the saved checkpoint associated with the last completed layer change rather than the exact point where the outage occurred.
 
 **Advantages**
