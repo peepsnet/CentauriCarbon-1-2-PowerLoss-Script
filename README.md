@@ -31,6 +31,14 @@ This project provides a custom Klipper power_loss module and installer that dete
 - [Centauri Carbon 1](#centauri-carbon-1)
 - [Centauri Carbon 2](#centauri-carbon-2)
 - [Installation](#installation)
+    - [Connecting over SSH](connecting-over-ssh).
+    - [Auto installing on the Centauri Carbon 1](auto-installl-cc1)
+    - [Auto installing on the Centauri Carbon 2](auto-installl-cc2)
+    - General Installer Operations
+    - Options
+    - Manual install
+    - Add the config and restart Klipper
+    - Uninstall
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [Detection methods](#detection-methods)
@@ -190,7 +198,7 @@ Follow the section for your printer:
 
 Both sections end with the same two shared steps, described after them: [running the installer](#running-the-installer) and [adding the config](#add-the-config-and-restart-klipper).
 
-### Installing on the Centauri Carbon 1
+### Auto installing on the Centauri Carbon 1
 
 COSMOS on the CC1 is installed with the OpenCentauri installer, as described on the OpenCentauri website. This module goes on top of a working COSMOS install.
 
@@ -202,13 +210,13 @@ COSMOS on the CC1 is installed with the OpenCentauri installer, as described on 
     ```sh
    curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh
    ```
-   or if you want to bypass the scripts auto printer detection feature and specify the CC2 then use:
+   or if you want to bypass the scripts auto printer detection feature and specify the CC1 then use:
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc
+   curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh -s -- --model cc1
    ```
 4. **Add the config and restart Klipper.** Paste a `[power_loss]` section with `printer_model: cc1` into `printer.cfg` and run `RESTART`. See [Add the config and restart Klipper](#add-the-config-and-restart-klipper).
 
-### Installing on the Centauri Carbon 2 (alpha)
+### Auto installing on the Centauri Carbon 2 (alpha)
 
 > [!IMPORTANT]
 > COSMOS for the CC2 is an early **technical preview in alpha testing** at the time of writing.
@@ -343,63 +351,38 @@ RESTART
 If the module doesn't load, `REBOOT_MACHINE` does a full reboot. The installer's overlay mount is set up at boot, so a reboot also confirms that it persists.
 
 #### Verify
-
 In the Mainsail/Fluidd console run:
-
 ```
 POWER_LOSS_STATUS
 ```
-
 After about 30 seconds it should report `charge_done=True` and show which `detection=` method is active.
 
 ### Uninstall
-
-    ```sh
-       curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh --uninstall
-   ```
-
-## Configuration
-
-Every option has a default on `cc1`. `cc2` has pin defaults from Elegoo's config, and `custom` has none, so you must set the GPIO options. Only declare the options you want to change.
-
-```ini
-[power_loss]
-printer_model: cc1
-sensor_gpio: 192
-charge_gpio: 65
-rail_gpio: 203
-poll_interval: 0.01
-debounce_time: 0.05
-charge_time: 30
-save_path: /data/power_loss_state.json
-z_hop: 10.0
-travel_speed: 3000
-homing_override_z_lift: 5.0
-purge_mm: 15.0
-move_temp: 200.0
-tray_macro: MOVE_TO_TRAY
-wipe: True
-#invert_sensor: False
+```sh
+curl -fsSL https://raw.githubusercontent.com/peepsnet/CentauriCarbon-1-2-PowerLoss-Script/main/install.sh | sh --uninstall
 ```
 
+## Configuration
+Every option has a default on `cc1`. `cc2` has pin defaults from Elegoo's config, and `custom` has none, so you must set the GPIO options. Only declare the options you want to change.
+
 | Option                   | Default                          | Description                                                                                  |
-| ------------------------ | -------------------------------- | -------------------------------------------------------------------------------------------- |
-| `printer_model`          | `cc1`                            | `cc1`, `cc2` or `custom`. Selects the defaults below. `custom` has no GPIO defaults. |
+| ------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------- |
+| `printer_model`          | `cc1`, `cc2` or `custom`      | `cc1`, `cc2` or `custom`. Selects the defaults below. `custom` has no GPIO defaults. |
 | `sensor_gpio`            | `192` on `cc1`, `201` on `cc2`, required on `custom` | Linux GPIO for outage detection.                                                           |
 | `charge_gpio`            | `65` on `cc1`, `116` on `cc2`, required on `custom` | Linux GPIO that enables supercap charging.                                                 |
 | `rail_gpio`              | `203` on `cc1` and `cc2`, none on `custom` | Supercap output-to-rail line. Never driven. Startup fails if it matches the sensor or charge pin. |
-| `poll_interval`          | `0.01`                           | Seconds between reads when using the polling fallback.                                       |
-| `debounce_time`          | `0.05`                           | Seconds an outage must persist before it counts. Filters electrical noise and flickers.      |
-| `charge_time`            | `30`                             | Seconds the supercap is assumed to need to charge. Reported by `POWER_LOSS_STATUS`.          |
-| `save_path`              | `/data/power_loss_state.json`    | Where the state file is written. Must be on a writable partition.                            |
-| `z_hop`                  | `10.0`                           | Safety lift (mm) before homing X/Y on resume.                                                |
-| `travel_speed`           | `3000`                           | Speed (mm/min) for hop and travel moves on resume.                                           |
-| `homing_override_z_lift`  | `5.0`                            | Must match the `G0 Z<N>` lift in your `[homing_override]` macro. See [limitations](#known-limitations). |
-| `purge_mm`               | `15.0`                           | Filament purged at the tray before resuming, to clear ooze.                                  |
-| `move_temp`              | `200.0`                          | Nozzle temperature to reach before any movement. The full target keeps heating in the background. |
+| `poll_interval`          | `0.01`                        | Seconds between reads when using the polling fallback.                                       |
+| `debounce_time`          | `0.05`                        | Seconds an outage must persist before it counts. Filters electrical noise and flickers.      |
+| `charge_time`            | `30`                          | Seconds the supercap is assumed to need to charge. Reported by `POWER_LOSS_STATUS`.          |
+| `save_path`              | `/data/power_loss_state.json` | Where the state file is written. Must be on a writable partition.                            |
+| `z_hop`                  | `10.0`                        | Safety lift (mm) before homing X/Y on resume.                                                |
+| `travel_speed`           | `3000`                        | Speed (mm/min) for hop and travel moves on resume.                                           |
+| `homing_override_z_lift`  | `5.0`                        | Must match the `G0 Z<N>` lift in your `[homing_override]` macro. See [limitations](#known-limitations). |
+| `purge_mm`               | `15.0`                        | Filament purged at the tray before resuming, to clear ooze.                                  |
+| `move_temp`              | `200.0`                       | Nozzle temperature to reach before any movement. The full target keeps heating in the background. |
 | `tray_macro`             | `MOVE_TO_TRAY` on `cc1`, blank otherwise | Macro that parks the toolhead at the purge tray. If blank, the purge and wipe are skipped. |
 | `wipe`                   | `True` on `cc1`, `False` otherwise | Run the built-in tray wipe pattern (CC1 coordinates). Rejected on any model other than `cc1`. |
-| `invert_sensor`          | `False`                          | Set to `True` if the sensor polarity turns out to be inverted.                               |
+| `invert_sensor`          | `False`                       | Set to `True` if the sensor polarity turns out to be inverted.                               |
 
 ## Commands
 
