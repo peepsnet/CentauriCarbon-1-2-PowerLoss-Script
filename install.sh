@@ -183,7 +183,7 @@ choose_model() {
     fi
     say "Which printer is this?"
     say "  1) Centauri Carbon 1"
-    say "  2) Centauri Carbon 2 (pins from Elegoo's config, not yet confirmed on hardware)"
+    say "  2) Centauri Carbon 2 (alpha COSMOS; outage sensor confirmed on one CC2, other pins not independently verified)"
     say "  3) Other / custom (you supply the GPIO numbers)"
     while [ -z "$MODEL" ]; do
         ask "Choose 1, 2 or 3: "
@@ -207,8 +207,9 @@ fi
 
 say "Installing for: $MODEL"
 if [ "$MODEL" = cc2 ]; then
-    warn "CC2 pin defaults are derived from Elegoo's config and NOT yet confirmed on hardware."
-    warn "Read the README's CC2 section and verify sensor polarity before relying on this."
+    warn "CC2 support is partly tested: the outage sensor was confirmed on one CC2, but the charge pin"
+    warn "and a full save/resume are not independently verified."
+    warn "Read the README's CC2 section and check the sensor with POWER_LOSS_TEST_READ N=100 before relying on this."
 fi
 
 # ---------------------------------------------------------------- get module
@@ -286,7 +287,13 @@ patch_init() {
         echo "    fi"
         echo "    $MARK_END"
     } >"$BLOCK"
-    cp -p "$INIT" "$INIT.bak-power_loss"
+    if ! cp -p "$INIT" "$INIT.bak-power_loss" 2>/dev/null; then
+        warn "cannot write next to $INIT (read-only filesystem?), so it was not patched."
+        warn "The overlay is mounted now but will NOT survive a reboot. To persist it,"
+        warn "add this inside your boot/start sequence yourself:"
+        cat "$BLOCK" >&2
+        return
+    fi
     awk -v blk="$BLOCK" '
         { print }
         /^[ \t]*start\)/ && !done {
@@ -294,9 +301,15 @@ patch_init() {
             close(blk); done = 1
         }' "$INIT.bak-power_loss" >"$TMPD/init.new"
     if grep -q 'power_loss-overlay-begin' "$TMPD/init.new"; then
-        cat "$TMPD/init.new" >"$INIT"
-        say "Patched $INIT (backup: $INIT.bak-power_loss). Review it before rebooting."
-        say "A COSMOS update may overwrite it; re-run this installer afterwards."
+        if cat "$TMPD/init.new" >"$INIT" 2>/dev/null; then
+            say "Patched $INIT (backup: $INIT.bak-power_loss). Review it before rebooting."
+            say "A COSMOS update may overwrite it; re-run this installer afterwards."
+        else
+            cp "$INIT.bak-power_loss" "$INIT" 2>/dev/null || true
+            warn "could not write $INIT, so it was not patched. The mount will NOT survive a reboot."
+            warn "Add this inside your boot/start sequence yourself:"
+            cat "$BLOCK" >&2
+        fi
     else
         rm -f "$INIT.bak-power_loss"
         warn "no 'start)' block found in $INIT, so it was not patched."
@@ -320,8 +333,8 @@ make_snippet() {
     echo "# Must match the Z lift in your [homing_override]:"
     echo "homing_override_z_lift: 5.0"
     if [ "$MODEL" = cc2 ]; then
-        echo "# CC2: check polarity with POWER_LOSS_TEST_READ N=100 (mains on)."
-        echo "# If every reading is 1, uncomment:"
+        echo "# CC2: with mains on, POWER_LOSS_TEST_READ N=100 should read all 0."
+        echo "# If yours reads all 1, uncomment:"
         echo "#invert_sensor: True"
     fi
 }
@@ -347,10 +360,12 @@ fi
 
 say ""
 say "Next steps:"
-say "  1. Restart Klipper when NO print is running (the installer never does this for you)."
-say "      You can just type "reboot" here now to reboot. "
+say "  1. When NO print is running, restart Klipper: run RESTART in the web console."
+say '     Or type "reboot" here to restart the whole printer (this also confirms the mount persists).'
+say "     The installer never restarts anything for you."
 say "  2. Run POWER_LOSS_STATUS in the console; after ~30 s it should show charge_done=True."
 if [ "$MODEL" = cc2 ]; then
     say "  3. CC2: verify the sensor with POWER_LOSS_TEST_READ N=100 before trusting a save."
 fi
-say "  To remove everything later: sh install.sh --uninstall"
+say "  To remove everything later:"
+say "     curl -fsSL $RAW_BASE/install.sh | sh -s -- --uninstall"
