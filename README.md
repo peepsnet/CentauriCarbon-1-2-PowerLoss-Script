@@ -222,12 +222,13 @@ COSMOS on the CC1 is installed with the OpenCentauri installer, as described on 
 > COSMOS for the CC2 is an early **technical preview in alpha testing** at the time of writing.
 > This applies to the **CC2 and CC2C only**; the C2 and C2C aren't supported.
 > To install COSMOS on your CC2 follow the steps in OpenCentauri's alpha announcement on their Discord: [announcement](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488).
+> Here is an updated install link for the C2/CC2 via [Discord](https://discord.com/channels/1367538416539013122/1523397810312187985/1561708900837888001).
 > That post is the source of truth and may have changed, so read it before you begin and report what you run into, good and bad.
 > I used this method on my CC2.
 
 Install this module:
 
-1. **Install COSMOS Firmware.** Follow the official [CC2 COSMOS install guide](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488). 
+1. **Install COSMOS Firmware.** Follow the official [CC2 COSMOS install guide](https://discord.com/channels/1367538416539013122/1558535377344659488/1558535377344659488) or the [Updated CC2 Install Guide](https://discord.com/channels/1367538416539013122/1523397810312187985/1561708900837888001).
 2. **Connect over SSH** as `root` and leave the password blank. See [Connecting over SSH](#connecting-over-ssh).
 3. **Run the installer** from the SSH session. See [Running the installer](#running-the-installer):
    ```sh
