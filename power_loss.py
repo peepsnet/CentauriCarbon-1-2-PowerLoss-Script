@@ -63,7 +63,7 @@
 #   #invert_sensor: False
 #
 # Commands:
-#   POWER_LOSS_STATUS | POWER_LOSS_RESUME | POWER_LOSS_RESUME_SAFE
+#   POWER_LOSS_STATUS [RECHECK=1] | POWER_LOSS_RESUME | POWER_LOSS_RESUME_SAFE
 #   POWER_LOSS_DISCARD | POWER_LOSS_TEST_READ N=<n>
 #
 # Detection tiers: raw GPIO v1 ioctl edge events -> sysfs polling fallback.
@@ -225,6 +225,8 @@ class PowerLoss:
         self.purge_mm = config.getfloat("purge_mm", 15., minval=0.)
         self.move_temp = config.getfloat("move_temp", 200., minval=0.)
         self.save_path = config.get("save_path", "/data/power_loss_state.json")
+        self.save_path_ok = None      # result of the startup writability probe
+        self.save_path_error = ""
 
         self.charge_pin = SysfsGpio(self.charge_line)
         self.charge_pin.set_direction("out")
@@ -260,7 +262,8 @@ class PowerLoss:
 
         reg = self.gcode.register_command
         reg("POWER_LOSS_STATUS", self.cmd_STATUS,
-            desc="Show power loss monitor status")
+            desc="Show power loss monitor status (RECHECK=1 re-tests "
+                 "that the state file location is writable)")
         reg("POWER_LOSS_RESUME", self.cmd_RESUME,
             desc="Resume using the precise instant-of-outage position")
         reg("POWER_LOSS_RESUME_SAFE", self.cmd_RESUME_SAFE,
@@ -307,9 +310,62 @@ class PowerLoss:
             return None
 
     # ------------------------------------------------------------------
+    # State-file location check
+    # ------------------------------------------------------------------
+    def _probe_save_path(self):
+        """Check that a state file can really be written to save_path:
+        create, write 4 KiB, fsync and remove a probe file in its
+        directory. Sets save_path_ok / save_path_error; never raises."""
+        directory = os.path.dirname(os.path.abspath(self.save_path))
+        probe = os.path.join(directory, ".power_loss_probe.%d" % os.getpid())
+        ok, err = True, ""
+        if os.path.isdir(self.save_path):
+            ok, err = False, "%s is a directory, not a file" % self.save_path
+        elif not os.path.isdir(directory):
+            ok, err = False, "directory %s does not exist" % directory
+        else:
+            try:
+                fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                             0o644)
+                try:
+                    os.write(fd, b"\0" * 4096)
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            except OSError as e:
+                ok, err = False, "%s in %s" % (e.strerror or e, directory)
+            finally:
+                try:
+                    os.remove(probe)
+                except OSError:
+                    pass
+        self.save_path_ok, self.save_path_error = ok, err
+        return ok
+
+    def _save_path_warning(self):
+        return ("power_loss: WARNING: cannot write the state file at %s "
+                "(%s). A power outage would NOT be saved. Fix the path or "
+                "mount, then run POWER_LOSS_STATUS RECHECK=1."
+                % (self.save_path, self.save_path_error))
+
+    def _delayed_save_path_warning(self, eventtime):
+        # Console clients often aren't connected at klippy:ready, so repeat
+        # the warning to the console a little later.
+        if self.save_path_ok is False:
+            self.gcode.respond_info(self._save_path_warning())
+        return self.reactor.NEVER
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
     def _handle_ready(self):
+        if self._probe_save_path():
+            logging.info("power_loss: state file location %s is writable",
+                         self.save_path)
+        else:
+            logging.warning(self._save_path_warning())
+            self.reactor.register_timer(self._delayed_save_path_warning,
+                                        self.reactor.monotonic() + 10.)
         self.charge_pin.write(1)
         self.start_time = self.reactor.monotonic()
         self.timer = self.reactor.register_timer(self._poll, self.reactor.NOW)
@@ -735,13 +791,18 @@ class PowerLoss:
     # Commands
     # ------------------------------------------------------------------
     def cmd_STATUS(self, gcmd):
+        if gcmd.get_int("RECHECK", 0):
+            self._probe_save_path()
         gcmd.respond_info(
             "model=%s sensor=GPIO%d charge=GPIO%d rail_guard=%s "
-            "charge_done=%s saved=%s pending_resume=%s detection=%s"
+            "charge_done=%s saved=%s pending_resume=%s detection=%s "
+            "save_path_writable=%s"
             % (self.model, self.sensor_line, self.charge_line,
                self.rail_line, self.charge_done,
                self.saved_already, os.path.exists(self.save_path),
-               self.detection_method))
+               self.detection_method, self.save_path_ok))
+        if self.save_path_ok is False:
+            gcmd.respond_info(self._save_path_warning())
 
     def cmd_DISCARD(self, gcmd):
         self.prompt_attempts_left = 0
