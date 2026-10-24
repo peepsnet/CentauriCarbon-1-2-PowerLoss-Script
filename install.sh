@@ -248,9 +248,31 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------- install
-mkdir -p "$UPPER" "$WORK"
-cp "$MODULE" "$UPPER/power_loss.py"
-say "Copied module to $UPPER/power_loss.py"
+# The module and (by default) the saved print state both live under /data, so
+# make sure it can really be written before changing anything.
+writable_dir() {  # writable_dir DIR: create it if needed, then write a probe
+    mkdir -p "$1" 2>/dev/null || return 1
+    probe="$1/.power_loss_probe.$$"
+    ( : >"$probe" ) 2>/dev/null || return 1
+    rm -f "$probe"
+}
+for d in "$UPPER" "$WORK"; do
+    writable_dir "$d" || die "cannot write to $d (is the filesystem read-only or full?). Check 'mount | grep data' and 'df -h', or choose another location with POWER_LOSS_UPPER and POWER_LOSS_WORK."
+done
+SAVE_DIR=$(dirname -- "$UPPER")
+writable_dir "$SAVE_DIR" || warn "$SAVE_DIR is not writable, so the default state file (/data/power_loss_state.json) could not be saved."
+say "Verified $UPPER is writable. The module re-checks the state file location when Klipper starts"
+say "(see POWER_LOSS_STATUS: save_path_writable)."
+
+if [ "$NO_MOUNT" -eq 0 ] && overlay_mounted; then
+    # Already mounted (an update): write through the overlay itself.
+    # Changing the upper directory directly while it is mounted is undefined.
+    cp "$MODULE" "$LOWER/power_loss.py"
+    say "Updated module through the mounted overlay ($LOWER/power_loss.py)"
+else
+    cp "$MODULE" "$UPPER/power_loss.py"
+    say "Copied module to $UPPER/power_loss.py"
+fi
 
 if [ "$NO_MOUNT" -eq 0 ]; then
     if ! overlay_mounted; then
