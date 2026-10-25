@@ -1,5 +1,8 @@
 # Elegoo Centauri Carbon Power-Loss Recovery for Klipper (CC1 & CC2)
 
+# This is a work-in-progress. It does not work with any printers using CANVAS. I have to figure that out!!
+
+
 Power-loss recovery for the Elegoo Centauri Carbon 1 (CC1) and Centauri Carbon 2 (CC2) running COSMOS firmware and Klipper.
 
 This project provides a custom Klipper power_loss module and installer that detect a mains power outage, save the current print state when possible, and offer print recovery after power is restored.
